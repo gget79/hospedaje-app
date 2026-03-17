@@ -11,7 +11,20 @@ class Database:
     """
 
     def __init__(self, db_path: Path, project_root: Path) -> None:
-        self.db_path = db_path
+        import os
+
+        # --- Detectar si estamos en Render ---
+        RENDER = os.environ.get("RENDER", None) is not None
+
+        if RENDER:
+            # En Render la base debe vivir SIEMPRE en el disco persistente
+            DATA_DIR = Path("/opt/render/project/src/data")
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            self.db_path = DATA_DIR / "database.db"
+        else:
+            # En local sigue usando el path normal
+            self.db_path = db_path
+
         self.project_root = project_root
         self.data_dir = self.db_path.parent
         self.data_dir.mkdir(parents=True, exist_ok=True)
