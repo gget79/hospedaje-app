@@ -108,7 +108,7 @@ class Database:
         with self.connect() as conn:
             return pd.read_sql_query(sql, conn, params=params or [])
 
-    # ---- Limpieza de datos preservando perfiles ----
+    # ---- Limpieza de datos preservando perfiles FULL----
     def clear_data_preserve_perfiles(self) -> None:
         """
         Elimina datos de todas las tablas de negocio y reinicia autoincrementos,
@@ -147,17 +147,16 @@ class Database:
                 conn.execute("DELETE FROM gastos;")
 
                 # usuarios depende de perfilUsuarios (perfiles se preservan)
-                #GETTEST conn.execute("DELETE FROM usuarios;")
+                conn.execute("DELETE FROM usuarios;")
 
                 # --- Padres y catálogos ---
-                #GETTEST conn.execute("DELETE FROM departamentos;")
-                #GETTEST conn.execute("DELETE FROM conceptoGastos;")
-                #GETTEST conn.execute("DELETE FROM propietarios;")
+                conn.execute("DELETE FROM departamentos;")
+                conn.execute("DELETE FROM conceptoGastos;")
+                conn.execute("DELETE FROM propietarios;")
 
                 # --- Saldo inicial (se preserva la tabla, pero se limpia el registro) ---
                 try:
-                    #GETTEST conn.execute("DELETE FROM saldoInicial WHERE id = 1;")
-                    pass #GETTEST 
+                    conn.execute("DELETE FROM saldoInicial WHERE id = 1;")
                 except sqlite3.OperationalError:
                     # Si no existe, lo ignoramos
                     pass
@@ -166,8 +165,7 @@ class Database:
                 try:
                     conn.execute(
                         "DELETE FROM sqlite_sequence WHERE name IN "
-                        #GETTEST "('abonosReserva','reservas','gastos','usuarios','departamentos','conceptoGastos','propietarios','saldoInicial');"
-                        "('abonosReserva','reservas','gastos');"
+                        "('abonosReserva','reservas','gastos','usuarios','departamentos','conceptoGastos','propietarios','saldoInicial');"
                     )
                 except sqlite3.OperationalError:
                     # sqlite_sequence no existe cuando no se usó AUTOINCREMENT
@@ -179,3 +177,66 @@ class Database:
                 conn.rollback()
                 # Propaga el mensaje para mostrarlo en la UI
                 raise RuntimeError(f"Error al limpiar BD: {e}")
+            
+    # ---- Limpieza de datos preservando perfiles TRANSACCIONES----
+    def clear_data_preserve_perfiles_2(self) -> None:
+            """
+            Elimina datos de todas las tablas de negocio y reinicia autoincrementos,
+            preservando la tabla perfilUsuarios.
+            Orden de borrado respeta FK (hijas -> padres):
+            - abonosReserva (hija de reservas)
+            - reservas      (hija de departamentos)
+            - gastos        (hija de conceptoGastos)
+            - usuarios      (hija de perfilUsuarios)  -> se puede borrar sin tocar perfiles
+            - departamentos (hijo de propietarios)
+            - conceptoGastos
+            - propietarios
+            - saldoInicial  (se borra el registro id=1)
+            También limpia sqlite_sequence si existe.
+            """
+            import sqlite3
+
+            with self.connect() as conn:
+                conn.execute("PRAGMA foreign_keys = ON;")
+                try:
+                    # Inicia transacción
+                    conn.execute("BEGIN;")
+
+                    # --- Tablas HIJAS primero ---
+                    # abonosReserva depende de reservas
+                    try:
+                        conn.execute("DELETE FROM abonosReserva;")
+                    except sqlite3.OperationalError:
+                        # La tabla aún no existe en algunas instalaciones
+                        pass
+
+                    # reservas depende de departamentos
+                    conn.execute("DELETE FROM reservas;")
+
+                    # gastos depende de conceptoGastos
+                    conn.execute("DELETE FROM gastos;")
+
+                    
+                    # --- Saldo inicial (se preserva la tabla, pero se limpia el registro) ---
+                    try:
+                        pass
+                    except sqlite3.OperationalError:
+                        # Si no existe, lo ignoramos
+                        pass
+
+                    # --- Reiniciar autoincrementos (si sqlite_sequence existe) ---
+                    try:
+                        conn.execute(
+                            "DELETE FROM sqlite_sequence WHERE name IN "
+                            "('abonosReserva','reservas','gastos');"
+                        )
+                    except sqlite3.OperationalError:
+                        # sqlite_sequence no existe cuando no se usó AUTOINCREMENT
+                        pass
+
+                    conn.commit()
+
+                except Exception as e:
+                    conn.rollback()
+                    # Propaga el mensaje para mostrarlo en la UI
+                    raise RuntimeError(f"Error al limpiar BD: {e}")

@@ -96,6 +96,24 @@ def ui_admin_limpiar_bd(db: Database):
         except Exception as e:
             st.error(f"Ocurrió un error al limpiar la base: {e}")
 
+def ui_admin_limpiar_bd_2(db: Database):
+    st.header("🧨 Administración → Limpiar base de datos")
+
+    st.warning(
+        "Esta acción **eliminará** la información de **Usuarios, Propietarios, "
+        "Departamentos, Conceptos de Gastos, Gastos y Reservas**. "
+        "Se **conservarán** los registros de **perfilUsuarios**."
+    )
+    st.caption("También se reiniciarán los autoincrementos de las tablas limpiadas.")
+
+    confirmar = st.checkbox("Sí, entiendo las consecuencias y deseo continuar")
+    if st.button("🧹 Limpiar AHORA", disabled=not confirmar, type="primary"):
+        try:
+            db.clear_data_preserve_perfiles_2()
+            st.success("Base de datos limpiada. Los perfiles y catálogos se han conservado.")
+        except Exception as e:
+            st.error(f"Ocurrió un error al limpiar la base: {e}")
+
 def ui_admin_saldo_inicial(db: Database):
     st.header("💰 Administración → Saldo inicial (una sola vez)")
 

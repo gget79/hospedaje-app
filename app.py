@@ -10,7 +10,7 @@ from core.repositories import (
 
 # Admin
 from ui.admin import (
-    ui_admin_base_datos, ui_admin_usuarios, ui_admin_limpiar_bd,
+    ui_admin_base_datos, ui_admin_usuarios, ui_admin_limpiar_bd, ui_admin_limpiar_bd_2,
     ui_admin_saldo_inicial, ui_admin_importar_excel
 )
 
@@ -166,7 +166,7 @@ elif seccion == "Administración":
             st.session_state["nav_seccion_prev"] = "Administración"
         submenu = st.sidebar.radio(
             "Administración",
-            ["Usuarios", "Base de datos", "Saldo inicial", "Importar Excel", "Limpiar base de datos"],
+            ["Usuarios", "Base de datos", "Saldo inicial", "Importar Excel", "Limpiar base de datos FULL","Limpiar base de datos TRX"],
             index=0,
             key="nav_admin"
         )
@@ -192,8 +192,10 @@ if seccion == "Administración":
             ui_admin_saldo_inicial(db)
         elif submenu == "Importar Excel":
             ui_admin_importar_excel(db)
-        elif submenu == "Limpiar base de datos":
+        elif submenu == "Limpiar base de datos FULL":
             ui_admin_limpiar_bd(db)
+        elif submenu == "Limpiar base de datos TRX":
+            ui_admin_limpiar_bd_2(db)
 
 elif seccion == "Catálogos":
     if submenu == "Propietarios":
