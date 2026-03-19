@@ -82,6 +82,42 @@ def admin_login_widget():
 # --- Configuración general ---
 st.set_page_config(page_title="Gestión de Hospedaje", page_icon="🏠", layout="wide")
 
+#Gestion credenciales de acceso.
+# --- AUTENTICACIÓN INICIAL (PROFESIONAL / HARD-CODE) ---
+def login_screen():
+    st.markdown("## 🔐 Autenticación requerida")
+    st.markdown("Ingrese sus credenciales para acceder al sistema.")
+
+    with st.form("login_form"):
+        usuario = st.text_input("Usuario", key="login_user")
+        clave = st.text_input("Contraseña", type="password", key="login_pass")
+        submitted = st.form_submit_button("Ingresar")
+
+    if submitted:
+        valid_users = {
+            "Gonzalo": "Adriana1979",
+            "Amalia": "1979gonzalo"
+        }
+
+        if usuario in valid_users and clave == valid_users[usuario]:
+            st.session_state["logged_in"] = True
+            st.session_state["usuario_actual"] = usuario
+            st.success("Acceso concedido.")
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos.")
+
+# Inicializar estado
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+
+# Mostrar login si aún no está autenticado
+if not st.session_state["logged_in"]:
+    login_screen()
+    st.stop()   # ⛔ DETIENE todo lo que viene después hasta iniciar sesión
+
+#------------------------------------
+
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
 DB_PATH = DATA_DIR / "hospedaje.db"
