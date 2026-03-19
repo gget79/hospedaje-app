@@ -3,6 +3,10 @@ from pathlib import Path
 import sqlite3
 import pandas as pd
 
+import shutil
+from datetime import datetime
+
+
 class Database:
     """
     Encapsula la conexión SQLite y asegura que el esquema exista.
@@ -240,3 +244,27 @@ class Database:
                     conn.rollback()
                     # Propaga el mensaje para mostrarlo en la UI
                     raise RuntimeError(f"Error al limpiar BD: {e}")
+                
+
+    def backup_database(self, keep_last: int = 10) -> Path:
+        """
+        Crea un backup automático de la base de datos en /mnt/data/backups/.
+        Mantiene solo los últimos 'keep_last' archivos.
+        """
+        backup_dir = self.data_dir / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = backup_dir / f"backup_{timestamp}.db"
+
+        # Copiar la BD actual
+        shutil.copy2(self.db_path, backup_path)
+
+        # Limpiar backups antiguos
+        backups = sorted(backup_dir.glob("backup_*.db"))
+        if len(backups) > keep_last:
+            to_delete = backups[:-keep_last]
+            for old in to_delete:
+                old.unlink()
+
+        return backup_path

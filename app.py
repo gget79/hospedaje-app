@@ -126,6 +126,14 @@ DB_PATH = DATA_DIR / "hospedaje.db"
 db = Database(db_path=DB_PATH, project_root=PROJECT_ROOT)
 db.ensure_database()
 
+#Backup automático de base de datos
+# Backup automático al iniciar (Railway)
+try:
+    db.backup_database()
+except Exception as e:
+    st.warning(f"No se pudo crear backup automático: {e}")
+#----------------------------------
+
 # --- Repositorios ---
 repo_perfiles = PerfilUsuariosRepo(db)
 repo_usuarios = UsuariosRepo(db)
