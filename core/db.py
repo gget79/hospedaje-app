@@ -13,16 +13,16 @@ class Database:
     def __init__(self, db_path: Path, project_root: Path) -> None:
         import os
 
-        # --- Detectar si estamos en Render ---
-        RENDER = os.environ.get("RENDER", None) is not None
+        # Detectar si estamos corriendo en Railway
+        ON_RAILWAY = os.environ.get("RAILWAY_STATIC_URL") is not None
 
-        if RENDER:
-            # En Render la base debe vivir SIEMPRE en el disco persistente
-            DATA_DIR = Path("/opt/render/project/src/data")
+        if ON_RAILWAY:
+            # Usar almacenamiento persistente real de Railway
+            DATA_DIR = Path("/mnt/data")
             DATA_DIR.mkdir(parents=True, exist_ok=True)
             self.db_path = DATA_DIR / "database.db"
         else:
-            # En local sigue usando el path normal
+            # Modo local (Windows / Linux / Mac)
             self.db_path = db_path
 
         self.project_root = project_root
