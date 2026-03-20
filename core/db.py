@@ -65,57 +65,53 @@ class Database:
             if column not in cols:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition};")
                 conn.commit()
-
+    
     def ensure_database(self) -> None:
         """
         Valida que la BD exista y tenga el esquema correcto.
-        Evita recrearla por error (especialmente en Railway).
-        Ejecuta migraciones de columnas nuevas si faltan.
+        Evita recrearla en Railway aún si el mount tarda.
+        Ejecuta migraciones necesarias.
         """
 
-        # ---- FIX para Railway: evitar BD vacía si el mount tarda ----
+        # --- FIX Railway: permitir que /mnt/data se monte ---
         if str(self.db_path).startswith("/mnt/data"):
             import time
-            # Espera breve para permitir que Railway monte el filesystem persistente
-            for _ in range(6):     # 3 segundos en total
+            for _ in range(10):  # espera total de 5 segundos
                 if self.db_path.exists():
                     break
                 time.sleep(0.5)
 
-        # ---- Si la BD REALMENTE no existe, inicializar schema ----
-        needs_init = not self.db_path.exists()
-        if needs_init:
+        # --- Inicialización si no existe la BD ---
+        if not self.db_path.exists():
             self.initialize_schema()
         else:
-            # Verificar existencia de tablas mínimas
-            required_tables = [
+            # Verificar que tablas mínimas existan
+            required_tables = {
                 "perfilUsuarios", "usuarios", "propietarios", "departamentos",
                 "conceptoGastos", "gastos", "reservas", "saldoInicial",
                 "abonosReserva"
-            ]
-
+            }
             with self.connect() as conn:
-                cur = conn.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table';"
-                )
+                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
                 existing = {row[0] for row in cur.fetchall()}
 
-            # Si falta alguna tabla importante, recrear schema
-            if not set(required_tables).issubset(existing):
+            if not required_tables.issubset(existing):
                 self.initialize_schema()
 
-        # ================================================================
-        # MIGRACIONES DE COLUMNAS (AQUI YA EXISTE BD Y TABLAS)
-        # ================================================================
+        # ================================
+        # MIGRACIONES (ahora sí aquí)
+        # ================================
 
-        # En reservas
+        # Reservas
         self.ensure_column("reservas", "numeroPersonas", "INTEGER NOT NULL DEFAULT 1")
         self.ensure_column("reservas", "autorizacionSolicitada", "INTEGER NOT NULL DEFAULT 0")
 
-        # En departamentos
+        # Departamentos
         self.ensure_column("departamentos", "esPropio", "INTEGER NOT NULL DEFAULT 1")
 
-        # (Si quieres migraciones futuras, las agregas aquí abajo)
+        # Gastos (si aplica)
+        self.ensure_column("gastos", "codigoDepartamento", "INTEGER")
+    
 
     # ---- Helpers SQL ----
     def run(self, sql: str, params=None) -> None:
