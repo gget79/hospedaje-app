@@ -68,34 +68,54 @@ class Database:
 
     def ensure_database(self) -> None:
         """
-        Valida que la BD exista y tenga el esquema. Si falta algo, lo crea.
-        Además ejecuta migraciones (p.ej., columnas nuevas).
+        Valida que la BD exista y tenga el esquema correcto.
+        Evita recrearla por error (especialmente en Railway).
+        Ejecuta migraciones de columnas nuevas si faltan.
         """
+
+        # ---- FIX para Railway: evitar BD vacía si el mount tarda ----
+        if str(self.db_path).startswith("/mnt/data"):
+            import time
+            # Espera breve para permitir que Railway monte el filesystem persistente
+            for _ in range(6):     # 3 segundos en total
+                if self.db_path.exists():
+                    break
+                time.sleep(0.5)
+
+        # ---- Si la BD REALMENTE no existe, inicializar schema ----
         needs_init = not self.db_path.exists()
         if needs_init:
             self.initialize_schema()
         else:
-            # Verificamos existencia de tablas mínimas
+            # Verificar existencia de tablas mínimas
             required_tables = [
                 "perfilUsuarios", "usuarios", "propietarios", "departamentos",
-                "conceptoGastos", "gastos", "reservas"
+                "conceptoGastos", "gastos", "reservas", "saldoInicial",
+                "abonosReserva"
             ]
+
             with self.connect() as conn:
-                cur = conn.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                cur = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table';"
+                )
                 existing = {row[0] for row in cur.fetchall()}
+
+            # Si falta alguna tabla importante, recrear schema
             if not set(required_tables).issubset(existing):
                 self.initialize_schema()
 
-        # ... dentro de ensure_database()
-        required_tables = [
-            "perfilUsuarios", "usuarios", "propietarios", "departamentos",
-            "conceptoGastos", "gastos", "reservas", "saldoInicial"  # 👈 asegura saldoInicial
-        ]
-        # ---- Migraciones: garantizar nuevas columnas ----
+        # ================================================================
+        # MIGRACIONES DE COLUMNAS (AQUI YA EXISTE BD Y TABLAS)
+        # ================================================================
+
+        # En reservas
         self.ensure_column("reservas", "numeroPersonas", "INTEGER NOT NULL DEFAULT 1")
         self.ensure_column("reservas", "autorizacionSolicitada", "INTEGER NOT NULL DEFAULT 0")
-        # NUEVO: tipo de propiedad de departamento (1 propio, 0 ajeno)
+
+        # En departamentos
         self.ensure_column("departamentos", "esPropio", "INTEGER NOT NULL DEFAULT 1")
+
+        # (Si quieres migraciones futuras, las agregas aquí abajo)
 
     # ---- Helpers SQL ----
     def run(self, sql: str, params=None) -> None:
