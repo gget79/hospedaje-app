@@ -95,7 +95,7 @@ def login_screen():
 
     if submitted:
         valid_users = {
-            "Gonzalo": "Adriana1979",
+            "Gonzalo": "Adriana1979.",
             "Amalia": "1979gonzalo"
         }
 
