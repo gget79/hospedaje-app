@@ -227,7 +227,10 @@ def ui_analisis_predictivo_ingresos(db: Database):
             comp[f"ing_{anio_b}"] = comp["mes"].map(db_["ingresos"]).fillna(0)
             comp[f"noc_{anio_a}"] = comp["mes"].map(da["noches"]).fillna(0).astype(int)
             comp[f"noc_{anio_b}"] = comp["mes"].map(db_["noches"]).fillna(0).astype(int)
+            comp = comp.sort_values("mes")
+            orden_meses = comp["mes_nombre"].tolist()
             comp = comp.set_index("mes_nombre")
+            comp.index = pd.CategoricalIndex(comp.index, categories=orden_meses, ordered=True)
 
             st.markdown("**Reservas por mes**")
             st.bar_chart(comp[[f"res_{anio_a}", f"res_{anio_b}"]])
@@ -341,7 +344,10 @@ def ui_analisis_predictivo_ingresos(db: Database):
         # Mes más popular
         df_mes_pop = df.groupby("mes").agg(reservas=("numero","count")).reset_index()
         df_mes_pop["mes_nombre"] = df_mes_pop["mes"].map(MESES_ES)
-        df_mes_pop = df_mes_pop.set_index("mes_nombre").sort_index()
+        df_mes_pop = df_mes_pop.sort_values("mes")
+        orden_pop = df_mes_pop["mes_nombre"].tolist()
+        df_mes_pop = df_mes_pop.set_index("mes_nombre")
+        df_mes_pop.index = pd.CategoricalIndex(df_mes_pop.index, categories=orden_pop, ordered=True)
         st.markdown("**Reservas por mes (todos los años)**")
         st.bar_chart(df_mes_pop["reservas"])
 
@@ -639,7 +645,10 @@ def ui_analisis_predictivo_gastos(db):
             comp["mes_nombre"] = comp["mes"].map(MESES_ES)
             comp[f"gas_{anio_a}"] = comp["mes"].map(da["total"]).fillna(0)
             comp[f"gas_{anio_b}"] = comp["mes"].map(db_["total"]).fillna(0)
+            comp = comp.sort_values("mes")
+            orden_meses = comp["mes_nombre"].tolist()
             comp = comp.set_index("mes_nombre")
+            comp.index = pd.CategoricalIndex(comp.index, categories=orden_meses, ordered=True)
             st.markdown("**Gastos por mes ($)**")
             st.bar_chart(comp[[f"gas_{anio_a}", f"gas_{anio_b}"]])
             comp["var_%"] = np.where(
@@ -838,7 +847,10 @@ def ui_analisis_predictivo_combinado(db):
             for col in ["ingresos", "gastos", "margen"]:
                 comp[f"{col}_{anio_a}"] = comp["mes"].map(da[col] if col in da.columns else pd.Series(dtype=float)).fillna(0)
                 comp[f"{col}_{anio_b}"] = comp["mes"].map(db_[col] if col in db_.columns else pd.Series(dtype=float)).fillna(0)
+            comp = comp.sort_values("mes")
+            orden_meses = comp["mes_nombre"].tolist()
             comp = comp.set_index("mes_nombre")
+            comp.index = pd.CategoricalIndex(comp.index, categories=orden_meses, ordered=True)
             st.markdown("**Ingresos**")
             st.bar_chart(comp[[f"ingresos_{anio_a}", f"ingresos_{anio_b}"]])
             st.markdown("**Gastos**")
