@@ -144,7 +144,7 @@ repo_gastos = GastosRepo(db)
 repo_reservas = ReservasRepo(db)
 
 # --- Sidebar / navegación ---
-st.sidebar.title("🏠 DCE desarrollado por Gonzalo Estrella")
+st.sidebar.title("🏠 Gestión Hospedaje desarrollado por Gonzalo Estrella")
 
 menu_principal = ["Catálogos", "Reservas", "Gastos", "Reportes", "Administración"]
 
