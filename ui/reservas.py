@@ -46,6 +46,14 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
     # ===================== Formulario arriba =====================
     st.subheader("Formulario")
 
+    # Banner de modo edición
+    if R["edit_numero"]:
+        st.warning(f"✏️ Editando reserva **#{R['edit_numero']}** — modificá los campos y presioná Guardar.")
+
+    # Feedback persistente tras guardar/limpiar
+    if st.session_state.get("_reserva_toast"):
+        st.success(st.session_state.pop("_reserva_toast"))
+
     with st.container(border=True):
         # FILA 1
         c1, c2, c3 = st.columns(3)
@@ -145,7 +153,7 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
                         int(R["edit_numero"])
                     )
                 )
-                st.success(f"Reserva #{R['edit_numero']} actualizada.")
+                st.session_state["_reserva_toast"] = f"✅ Reserva #{R['edit_numero']} actualizada."
             else:
                 # INSERT
                 repo_reservas.insert(Reserva(
@@ -165,7 +173,7 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
                     numeroPersonas=int(R["numero_personas"]),
                     estado=R["estado"]
                 ))
-                st.success(f"Reserva registrada para {R['nombre_cli']} en depto {R['dep_num']}.")
+                st.session_state["_reserva_toast"] = f"✅ Reserva registrada para {R['nombre_cli']} en depto {R['dep_num']}."
 
             # Limpiar estado y recargar
             R["edit_numero"] = None

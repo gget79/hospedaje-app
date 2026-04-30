@@ -17,7 +17,6 @@ def ui_rep_reservas(db: Database):
     with c2:
         f_fin = st.date_input("Hasta", value=date.today())
 
-    # Incluye numeroPersonas y mantiene estado
     sql = """
     SELECT fecha, nombreCliente, departamento, fechaInicio, fechaFin, numeroNoches,
            valorNoche, totalEstadia, valorLimpieza, comision, numeroPersonas, estado
@@ -36,20 +35,42 @@ def ui_rep_reservas(db: Database):
         st.info("Sin datos en el rango seleccionado.")
         return
 
-    st.subheader("Detalle")
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    # ── Métricas resumen arriba ──
+    total       = float(pd.to_numeric(df["totalEstadia"],  errors="coerce").sum())
+    limpieza    = float(pd.to_numeric(df["valorLimpieza"], errors="coerce").sum())
+    comision    = float(pd.to_numeric(df["comision"],      errors="coerce").sum())
+    total_pers  = int(pd.to_numeric(df["numeroPersonas"],  errors="coerce").sum())
+    total_noch  = int(pd.to_numeric(df["numeroNoches"],    errors="coerce").sum())
 
-    st.subheader("Resumen")
-    total = float(pd.to_numeric(df["totalEstadia"], errors="coerce").sum())
-    limpieza = float(pd.to_numeric(df["valorLimpieza"], errors="coerce").sum())
-    comision = float(pd.to_numeric(df["comision"], errors="coerce").sum())
-    total_personas = int(pd.to_numeric(df["numeroPersonas"], errors="coerce").sum())
-    st.write(f"- **Reservas:** {len(df)}")
-    st.write(f"- **Total estadías:** {moneda(total)}")
-    st.write(f"- **Limpieza:** {moneda(limpieza)}")
-    st.write(f"- **Comisiones:** {moneda(comision)}")
-    st.write(f"- **Pasajeros (total):** {total_personas}")
-    st.write(f"- **Total general (aprox.):** {moneda(total + limpieza)}")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Reservas",        len(df))
+    c2.metric("Total estadías",  moneda(total))
+    c3.metric("Limpieza",        moneda(limpieza))
+    c4.metric("Noches vendidas", total_noch)
+    c5.metric("Pasajeros",       total_pers)
+
+    st.caption(f"Total general (estadía + limpieza): **{moneda(total + limpieza)}**  |  Comisiones: **{moneda(comision)}**")
+
+    st.subheader("Detalle")
+    # Renombrar columnas para mejor lectura
+    df_show = df.rename(columns={
+        "nombreCliente": "Cliente", "departamento": "Depto",
+        "fechaInicio": "Inicio", "fechaFin": "Fin",
+        "numeroNoches": "Noches", "valorNoche": "$/noche",
+        "totalEstadia": "Total estadía", "valorLimpieza": "Limpieza",
+        "comision": "Comisión", "numeroPersonas": "Personas", "estado": "Estado"
+    })
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+    # ── Exportar Excel ──
+    buf = BytesIO()
+    df_show.to_excel(buf, index=False, engine="openpyxl")
+    st.download_button(
+        "⬇️ Exportar Excel",
+        data=buf.getvalue(),
+        file_name=f"reservas_{f_ini}_{f_fin}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # =============== Reporte: GASTOS =================
@@ -73,14 +94,30 @@ def ui_rep_gastos(db: Database):
         st.info("Sin datos en el rango seleccionado.")
         return
 
-    st.subheader("Detalle")
-    df["valor"] = df["valor"].map(moneda)
-    st.dataframe(df, use_container_width=True, hide_index=True)
+    total = float(pd.to_numeric(df["valor"], errors="coerce").sum())
+    prom  = float(pd.to_numeric(df["valor"], errors="coerce").mean())
+    max_v = float(pd.to_numeric(df["valor"], errors="coerce").max())
 
-    st.subheader("Resumen")
-    total = float(pd.to_numeric(df["valor"].str.replace("[\\$,]", "", regex=True), errors="coerce").sum())
-    st.write(f"- **Gastos:** {len(df)}")
-    st.write(f"- **Total:** {moneda(total)}")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Gastos",    len(df))
+    c2.metric("Total",     moneda(total))
+    c3.metric("Promedio",  moneda(prom))
+    c4.metric("Mayor gasto", moneda(max_v))
+
+    st.subheader("Detalle")
+    df_show = df.copy()
+    df_show["valor"] = df_show["valor"].map(moneda)
+    df_show = df_show.rename(columns={"concepto": "Concepto", "detalle": "Detalle", "valor": "Valor", "fecha": "Fecha"})
+    st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+    buf = BytesIO()
+    df_show.to_excel(buf, index=False, engine="openpyxl")
+    st.download_button(
+        "⬇️ Exportar Excel",
+        data=buf.getvalue(),
+        file_name=f"gastos_{f_ini}_{f_fin}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # =============== Reporte: DIARIO =================
@@ -202,13 +239,27 @@ def ui_rep_diario(db: Database):
     st.subheader("Detalle (estado de cuenta)")
     st.dataframe(df_fmt, use_container_width=True, hide_index=True)
 
-    st.subheader("Resumen")
+    # ── Métricas resumen ──
     ingresos_total = float(pd.to_numeric(df["ingreso"], errors="coerce").sum())
     egresos_total  = float(pd.to_numeric(df["egreso"],  errors="coerce").sum())
-    st.write(f"- **Ingresos:** {moneda(ingresos_total)}")
-    st.write(f"- **Egresos:** {moneda(egresos_total)}")
-    st.write(f"- **Saldo inicial:** {moneda(float(saldo_ini))}")
-    st.write(f"- **Saldo final:** {moneda(float(df['saldo'].iloc[-1]) if not df.empty else saldo_ini)}")
+    saldo_final    = float(df["saldo"].iloc[-1]) if not df.empty else float(saldo_ini)
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Ingresos",    moneda(ingresos_total))
+    c2.metric("Egresos",     moneda(egresos_total))
+    c3.metric("Saldo inicial", moneda(float(saldo_ini)))
+    c4.metric("Saldo final", moneda(saldo_final),
+              delta=f"{moneda(saldo_final - float(saldo_ini))}")
+
+    # ── Exportar Excel ──
+    buf = BytesIO()
+    df_fmt.to_excel(buf, index=False, engine="openpyxl")
+    st.download_button(
+        "⬇️ Exportar Excel",
+        data=buf.getvalue(),
+        file_name=f"diario_{fi}_{ff}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 # =============== Reporte: DISPONIBILIDAD =================

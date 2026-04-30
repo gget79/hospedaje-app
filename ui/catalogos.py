@@ -510,42 +510,41 @@ def ui_cat_gastos(repo_gastos: GastosRepo, repo_conceptos: ConceptoGastosRepo):
     state.setdefault("concepto_desc", list(conceptos.keys())[0] if conceptos else "(cree un concepto primero)")
     state.setdefault("fecha", date.today())
 
+    # Banner de modo edición
+    if state["edit_numero"]:
+        st.warning(f"✏️ Editando gasto **#{state['edit_numero']}** — modificá los campos y presioná Guardar.")
+
     st.subheader("Formulario")
-    with st.form("form_gasto", clear_on_submit=False):
+    with st.container(border=True):
         col1, col2, col3 = st.columns(3)
         with col1:
             fecha_f = st.date_input("Fecha", value=state["fecha"], key="g_form_fecha")
         with col2:
             concepto_desc_f = st.selectbox("Concepto", list(conceptos.keys()), index=list(conceptos.keys()).index(state["concepto_desc"]) if state["concepto_desc"] in conceptos else 0, key="g_form_concepto")
         with col3:
-            valor_f = st.number_input("Valor", min_value=0.0, value=float(state["valor"]), step=1.0, key="g_form_valor")
+            valor_f = st.number_input("Valor ($)", min_value=0.0, value=float(state["valor"]), step=1.0, key="g_form_valor")
         detalle_f = st.text_input("Detalle", value=state["detalle"], key="g_form_detalle")
 
-        bcol1, bcol2, bcol3 = st.columns([1,1,2])
-        with bcol1:
-            guardar = st.form_submit_button("💾 Guardar")
-        with bcol2:
-            limpiar = st.form_submit_button("🧹 Limpiar")
+        bcol1, bcol2 = st.columns([1, 1])
+        guardar = bcol1.button("💾 Guardar", key="btn_gasto_guardar", use_container_width=True)
+        limpiar = bcol2.button("🧹 Limpiar", key="btn_gasto_limpiar", use_container_width=True)
 
     if guardar:
         if conceptos.get(concepto_desc_f, 0) == 0:
             st.error("Primero cree un **Concepto** en Catálogos → Conceptos de Gastos.")
         else:
             if state["edit_numero"]:
-                # UPDATE de la fila cargada
                 repo_gastos.db.run(
                     "UPDATE gastos SET fecha=?, codConcepto=?, detalle=?, valor=? WHERE numero=?;",
                     (str(fecha_f), int(conceptos[concepto_desc_f]), detalle_f.strip(), float(valor_f), int(state["edit_numero"]))
                 )
-                st.success(f"Gasto #{state['edit_numero']} actualizado.")
+                st.session_state["_gasto_toast"] = f"✅ Gasto #{state['edit_numero']} actualizado correctamente."
             else:
-                # INSERT
                 repo_gastos.insert(Gasto(
                     fecha=fecha_f, detalle=detalle_f.strip(), valor=valor_f, codConcepto=conceptos[concepto_desc_f]
                 ))
-                st.success("Gasto registrado.")
+                st.session_state["_gasto_toast"] = "✅ Gasto registrado correctamente."
 
-            # Limpiar estado del formulario
             state["edit_numero"] = None
             state["detalle"] = ""
             state["valor"] = 0.0
@@ -562,6 +561,10 @@ def ui_cat_gastos(repo_gastos: GastosRepo, repo_conceptos: ConceptoGastosRepo):
         st.rerun()
 
     st.divider()
+
+    # Feedback persistente tras guardar
+    if st.session_state.get("_gasto_toast"):
+        st.success(st.session_state.pop("_gasto_toast"))
 
     # ----------------- GRID ÚNICO (editable + acciones) -----------------
     st.subheader("Listado (editable + acciones)")

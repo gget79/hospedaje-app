@@ -156,16 +156,20 @@ def ui_autorizacion_ingreso(db, project_root: Path):
         with col2:
             celular_admin = st.text_input("WhatsApp administración (formato +593...)", value="+593")
 
-        st.caption("Ingresa hasta 8 personas (Nombre completo + Cédula). Una fila por persona.")
+        st.caption("Ingresa los datos de los huéspedes (Nombre completo + Cédula).")
+        num_filas = st.number_input("¿Cuántas personas ingresan?", min_value=1, max_value=8,
+                                    value=min(num_personas, 8), step=1)
         personas = []
-        for i in range(8):
+        for i in range(int(num_filas)):
             col_nom, col_id = st.columns([2, 1])
             with col_nom:
-                # Nota: usamos nonce en la key para que, tras finalizar, las cajas se “recreen” limpias
                 nombre_i = st.text_input(f"Nombre {i+1}", value="", key=f"p_nombre_{i}_{nonce}")
             with col_id:
                 cedula_i = st.text_input(f"Cédula {i+1}", value="", key=f"p_ced_{i}_{nonce}")
             personas.append((nombre_i.strip(), cedula_i.strip()))
+        # Rellenar hasta 8 con vacios para el template
+        while len(personas) < 8:
+            personas.append(("", ""))
 
         enviado = st.form_submit_button("📄 Generar documento")
         if enviado:
