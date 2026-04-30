@@ -135,6 +135,26 @@ class CajaRepo:
             if df_g is not None and not df_g.empty:
                 dfs.append(df_g)
 
+        # Ajustes contables (siempre se incluyen, independiente del modo)
+        try:
+            sql_aj = """
+            SELECT
+                a.fecha AS fecha,
+                'Ajuste' AS tipo,
+                printf('%s%s', a.concepto,
+                    CASE WHEN a.detalle IS NOT NULL AND a.detalle != ''
+                         THEN ': ' || a.detalle ELSE '' END) AS detalle,
+                CASE WHEN a.monto >= 0 THEN a.monto ELSE 0.0 END AS ingreso,
+                CASE WHEN a.monto < 0  THEN ABS(a.monto) ELSE 0.0 END AS egreso
+            FROM ajustesContables a
+            WHERE date(a.fecha) BETWEEN date(?) AND date(?)
+            """
+            df_aj = self.db.fetch_df(sql_aj, (fi.isoformat(), ff.isoformat()))
+            if df_aj is not None and not df_aj.empty:
+                dfs.append(df_aj)
+        except Exception:
+            pass  # tabla aún no existe en instancias antiguas
+
         if not dfs:
             return pd.DataFrame(columns=["fecha", "tipo", "detalle", "ingreso", "egreso"])
 
@@ -142,7 +162,7 @@ class CajaRepo:
 
         # Normaliza tipo y orden requerido
         df["tipo"] = df["tipo"].astype(str).replace({"Comision": "Comisión"})
-        orden_tipo = {"Ingreso": 0, "Comisión": 1, "Limpieza": 2, "Gasto": 3}
+        orden_tipo = {"Ingreso": 0, "Comisión": 1, "Limpieza": 2, "Gasto": 3, "Ajuste": 4}
         df["__ord__"] = df["tipo"].map(lambda t: orden_tipo.get(t, 99))
 
         df["fecha"] = pd.to_datetime(df["fecha"])

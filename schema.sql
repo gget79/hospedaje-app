@@ -76,6 +76,17 @@ CREATE TABLE IF NOT EXISTS abonosReserva (
     FOREIGN KEY(numeroReserva) REFERENCES reservas(numero)
 );
 
+CREATE TABLE IF NOT EXISTS ajustesContables (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha TEXT NOT NULL,
+    monto REAL NOT NULL,
+    concepto TEXT NOT NULL,
+    detalle TEXT,
+    usuario TEXT
+);
+
+CREATE INDEX IF NOT EXISTS ix_ajustes_fecha ON ajustesContables (fecha);
+
 CREATE INDEX IF NOT EXISTS ix_reservas_depto_ini_fin   ON reservas (codigoDepartamento, fechaInicio, fechaFin);
 CREATE INDEX IF NOT EXISTS ix_reservas_fechaInicio     ON reservas (fechaInicio);
 CREATE INDEX IF NOT EXISTS ix_reservas_fechaFin        ON reservas (fechaFin);

@@ -336,3 +336,184 @@ def ui_admin_importar_excel(db: Database):
 
             except Exception as e:
                 st.error(f"Error al leer el Excel: {e}")
+
+
+def ui_admin_ajustes_contables(db: Database, usuario_actual: str = ""):
+    st.header("⚖️ Administración → Ajustes Contables")
+    st.caption(
+        "Registrá correcciones o movimientos manuales de caja. "
+        "**Monto positivo** = ingreso extra. **Monto negativo** = egreso/descuento. "
+        "Aparecen en el reporte Diario ordenados por fecha."
+    )
+
+    # ── Asegurar tabla ──
+    db.db_run_safe("""
+        CREATE TABLE IF NOT EXISTS ajustesContables (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT NOT NULL,
+            monto REAL NOT NULL,
+            concepto TEXT NOT NULL,
+            detalle TEXT,
+            usuario TEXT
+        );
+    """)
+
+    # ── Feedback persistente ──
+    if st.session_state.get("_ajuste_toast"):
+        st.success(st.session_state.pop("_ajuste_toast"))
+
+    # ── Estado del formulario ──
+    S = st.session_state.setdefault("_ajuste_state", {})
+    S.setdefault("edit_id", None)
+    S.setdefault("fecha", date.today())
+    S.setdefault("monto", 0.0)
+    S.setdefault("concepto", "")
+    S.setdefault("detalle", "")
+
+    if S["edit_id"]:
+        st.warning(f"✏️ Editando ajuste **#{S['edit_id']}** — modificá los campos y presioná Guardar.")
+
+    # ── Formulario ──
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            S["fecha"] = st.date_input("Fecha", value=S["fecha"], key="aj_fecha")
+        with c2:
+            S["monto"] = st.number_input(
+                "Monto (+ ingreso / − egreso)",
+                value=float(S["monto"]),
+                step=1.0,
+                format="%.2f",
+                key="aj_monto",
+                help="Ingresá un valor positivo para registrar un ingreso, negativo para un egreso."
+            )
+
+        S["concepto"] = st.text_input(
+            "Concepto", value=S["concepto"], key="aj_concepto",
+            placeholder="Ej: Devolución, Cobro extra, Corrección de caja..."
+        )
+        S["detalle"] = st.text_input(
+            "Detalle (opcional)", value=S["detalle"], key="aj_detalle"
+        )
+
+        # Indicador visual del tipo
+        if S["monto"] > 0:
+            st.success(f"✅ Se registrará como **INGRESO** de ${S['monto']:,.2f}")
+        elif S["monto"] < 0:
+            st.error(f"🔴 Se registrará como **EGRESO** de ${abs(S['monto']):,.2f}")
+        else:
+            st.info("Ingresá un monto distinto de cero.")
+
+        b1, b2 = st.columns(2)
+        guardar = b1.button("💾 Guardar ajuste", key="aj_guardar", use_container_width=True)
+        limpiar = b2.button("🧹 Limpiar", key="aj_limpiar", use_container_width=True)
+
+    if guardar:
+        if not S["concepto"].strip():
+            st.warning("El concepto es obligatorio.")
+        elif S["monto"] == 0:
+            st.warning("El monto no puede ser cero.")
+        else:
+            if S["edit_id"]:
+                db.run(
+                    "UPDATE ajustesContables SET fecha=?, monto=?, concepto=?, detalle=?, usuario=? WHERE id=?;",
+                    (str(S["fecha"]), float(S["monto"]), S["concepto"].strip(),
+                     S["detalle"].strip() or None, usuario_actual, int(S["edit_id"]))
+                )
+                st.session_state["_ajuste_toast"] = f"✅ Ajuste #{S['edit_id']} actualizado."
+            else:
+                db.run(
+                    "INSERT INTO ajustesContables (fecha, monto, concepto, detalle, usuario) VALUES (?,?,?,?,?);",
+                    (str(S["fecha"]), float(S["monto"]), S["concepto"].strip(),
+                     S["detalle"].strip() or None, usuario_actual)
+                )
+                tipo = "ingreso" if S["monto"] > 0 else "egreso"
+                st.session_state["_ajuste_toast"] = f"✅ Ajuste registrado como {tipo} de ${abs(S['monto']):,.2f}."
+
+            S["edit_id"] = None
+            S["fecha"] = date.today()
+            S["monto"] = 0.0
+            S["concepto"] = ""
+            S["detalle"] = ""
+            st.rerun()
+
+    if limpiar:
+        S["edit_id"] = None
+        S["fecha"] = date.today()
+        S["monto"] = 0.0
+        S["concepto"] = ""
+        S["detalle"] = ""
+        st.rerun()
+
+    # ── Listado ──
+    st.subheader("Ajustes registrados")
+    df = db.fetch_df(
+        "SELECT id, fecha, monto, concepto, detalle, usuario FROM ajustesContables ORDER BY fecha DESC, id DESC;"
+    )
+
+    if df is None or df.empty:
+        st.info("No hay ajustes registrados aún.")
+        return
+
+    # Columnas de presentación
+    df_show = df.copy()
+    df_show["tipo"] = df_show["monto"].apply(lambda m: "📈 Ingreso" if float(m) >= 0 else "📉 Egreso")
+    df_show["monto_fmt"] = df_show["monto"].apply(lambda m: f"${abs(float(m)):,.2f}")
+
+    # Acción
+    df_show["Acción"] = "—"
+
+    try:
+        accion_col = st.column_config.SelectboxColumn(
+            "Acción", options=["—", "✏️ Editar", "🗑️ Eliminar"]
+        )
+    except Exception:
+        accion_col = st.column_config.TextColumn("Acción")
+
+    edited = st.data_editor(
+        df_show[["id", "fecha", "tipo", "monto_fmt", "concepto", "detalle", "usuario", "Acción"]],
+        key="aj_grid",
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        column_config={
+            "id":        st.column_config.NumberColumn("N°", disabled=True),
+            "fecha":     st.column_config.TextColumn("Fecha", disabled=True),
+            "tipo":      st.column_config.TextColumn("Tipo", disabled=True),
+            "monto_fmt": st.column_config.TextColumn("Monto", disabled=True),
+            "concepto":  st.column_config.TextColumn("Concepto", disabled=True),
+            "detalle":   st.column_config.TextColumn("Detalle", disabled=True),
+            "usuario":   st.column_config.TextColumn("Usuario", disabled=True),
+            "Acción":    accion_col,
+        }
+    )
+
+    cA1, cA2 = st.columns([1, 4])
+    with cA1:
+        confirmar_del = st.checkbox("Confirmo eliminación", key="aj_confirm_del")
+    with cA2:
+        if st.button("⚡ Aplicar acciones", use_container_width=True, key="aj_aplicar"):
+            act = edited[edited["Acción"].isin(["✏️ Editar", "🗑️ Eliminar"])].copy()
+            if act.empty:
+                st.info("No hay acciones seleccionadas.")
+            else:
+                dels = act[act["Acción"] == "🗑️ Eliminar"]
+                if not dels.empty:
+                    if not confirmar_del:
+                        st.warning("Marcá 'Confirmo eliminación' para eliminar.")
+                    else:
+                        for _, r in dels.iterrows():
+                            db.run("DELETE FROM ajustesContables WHERE id=?;", (int(r["id"]),))
+                        st.session_state["_ajuste_toast"] = f"✅ {len(dels)} ajuste(s) eliminado(s)."
+                        st.rerun()
+
+                eds = act[act["Acción"] == "✏️ Editar"]
+                if not eds.empty:
+                    row_id = int(eds.iloc[-1]["id"])
+                    orig = df[df["id"] == row_id].iloc[0]
+                    S["edit_id"] = row_id
+                    S["fecha"] = pd.to_datetime(orig["fecha"]).date()
+                    S["monto"] = float(orig["monto"])
+                    S["concepto"] = str(orig["concepto"] or "")
+                    S["detalle"] = str(orig["detalle"] or "")
+                    st.rerun()

@@ -111,9 +111,30 @@ class Database:
 
         # Gastos (si aplica)
         self.ensure_column("gastos", "codigoDepartamento", "INTEGER")
+
+        # Ajustes contables (tabla completa si no existe)
+        self.db_run_safe("""
+            CREATE TABLE IF NOT EXISTS ajustesContables (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                fecha TEXT NOT NULL,
+                monto REAL NOT NULL,
+                concepto TEXT NOT NULL,
+                detalle TEXT,
+                usuario TEXT
+            );
+        """)
     
 
     # ---- Helpers SQL ----
+    def db_run_safe(self, sql: str) -> None:
+        """Ejecuta SQL ignorando errores (útil para CREATE IF NOT EXISTS)."""
+        try:
+            with self.connect() as conn:
+                conn.executescript(sql)
+                conn.commit()
+        except Exception:
+            pass
+
     def run(self, sql: str, params=None) -> None:
         with self.connect() as conn:
             conn.execute(sql, params or [])
