@@ -65,6 +65,20 @@ def _color_bar(valores: pd.Series, col_name: str) -> pd.DataFrame:
     return valores.to_frame(col_name)
 
 
+def _graf(df_sorted: "pd.DataFrame", col, kind="bar"):
+    """
+    Grafica una columna de df_sorted respetando el orden cronológico.
+    df_sorted debe tener columna 'periodo' y estar ordenado por [anio, mes].
+    Usa CategoricalIndex para forzar el orden en st.bar/line/area_chart.
+    """
+    import pandas as pd
+    periodos = df_sorted["periodo"].tolist()
+    s = df_sorted.set_index("periodo")[col]
+    s.index = pd.CategoricalIndex(s.index, categories=periodos, ordered=True)
+    return s
+
+
+
 # ─────────────────────────────────────────────
 #  Sección principal
 # ─────────────────────────────────────────────
@@ -116,13 +130,13 @@ def ui_analisis_predictivo_ingresos(db: Database):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Reservas por mes**")
-            st.bar_chart(df_mes.set_index("periodo")["reservas"])
+            st.bar_chart(_graf(df_mes, "reservas"))
         with c2:
             st.markdown("**Ingresos por mes ($)**")
-            st.bar_chart(df_mes.set_index("periodo")["ingresos"])
+            st.bar_chart(_graf(df_mes, "ingresos"))
 
         st.markdown("**Noches vendidas por mes**")
-        st.area_chart(df_mes.set_index("periodo")["noches"])
+        st.area_chart(_graf(df_mes, "noches"))
 
         with st.expander("Ver tabla detallada"):
             df_show = df_mes[["periodo", "reservas", "noches", "ingresos", "personas"]].copy()
@@ -381,13 +395,13 @@ def ui_analisis_predictivo_ingresos(db: Database):
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**Reservas proyectadas**")
-                st.bar_chart(df_proy.set_index("periodo")["reservas_proyectadas"])
+                st.bar_chart(_graf(df_proy, "reservas_proyectadas"))
             with c2:
                 st.markdown("**Ingresos proyectados ($)**")
-                st.bar_chart(df_proy.set_index("periodo")["ingresos_proyectados"])
+                st.bar_chart(_graf(df_proy, "ingresos_proyectados"))
 
             st.markdown("**Noches proyectadas**")
-            st.line_chart(df_proy.set_index("periodo")["noches_proyectadas"])
+            st.line_chart(_graf(df_proy, "noches_proyectadas"))
 
             # Tabla
             df_proy2 = df_proy.copy()
@@ -571,12 +585,12 @@ def ui_analisis_predictivo_gastos(db):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Gasto total por mes ($)**")
-            st.bar_chart(df_mes.set_index("periodo")["total"])
+            st.bar_chart(_graf(df_mes, "total"))
         with c2:
             st.markdown("**Cantidad de gastos por mes**")
-            st.bar_chart(df_mes.set_index("periodo")["cantidad"])
+            st.bar_chart(_graf(df_mes, "cantidad"))
         st.markdown("**Evolución acumulada de gastos**")
-        st.area_chart(df_mes.set_index("periodo")["total"])
+        st.area_chart(_graf(df_mes, "total"))
         with st.expander("Ver tabla detallada"):
             df_show = df_mes[["periodo", "total", "cantidad"]].copy()
             df_show["total"] = df_show["total"].map(moneda)
@@ -679,7 +693,7 @@ def ui_analisis_predictivo_gastos(db):
                     "gastos_proyectados": max(m_g * t_fut + b_g, 0)
                 })
             df_proy = pd.DataFrame(proy)
-            st.bar_chart(df_proy.set_index("periodo")["gastos_proyectados"])
+            st.bar_chart(_graf(df_proy, "gastos_proyectados"))
             df_proy2 = df_proy.copy()
             df_proy2["gastos_proyectados"] = df_proy2["gastos_proyectados"].map(moneda)
             df_proy2.columns = ["Período", "Gastos proyectados"]
@@ -779,12 +793,12 @@ def ui_analisis_predictivo_combinado(db):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Ingresos ($)**")
-            st.bar_chart(df_comb.set_index("periodo")["ingresos"])
+            st.bar_chart(_graf(df_comb, "ingresos"))
         with c2:
             st.markdown("**Gastos ($)**")
-            st.bar_chart(df_comb.set_index("periodo")["gastos"])
+            st.bar_chart(_graf(df_comb, "gastos"))
         st.markdown("**Comparación directa Ingresos vs Gastos**")
-        st.line_chart(df_comb.set_index("periodo")[["ingresos", "gastos"]])
+        st.line_chart(df_comb.set_index(pd.CategoricalIndex(df_comb["periodo"], categories=df_comb["periodo"].tolist(), ordered=True))[["ingresos", "gastos"]])
         with st.expander("Ver tabla"):
             df_show = df_comb[["periodo", "ingresos", "gastos", "margen", "margen_%"]].copy()
             for col in ["ingresos", "gastos", "margen"]:
@@ -795,9 +809,9 @@ def ui_analisis_predictivo_combinado(db):
     with tabs[1]:
         st.subheader("Rentabilidad mensual (margen neto)")
         st.markdown("**Margen neto por mes (Ingresos \u2212 Gastos)**")
-        st.bar_chart(df_comb.set_index("periodo")["margen"])
+        st.bar_chart(_graf(df_comb, "margen"))
         st.markdown("**Margen % sobre ingresos**")
-        st.line_chart(df_comb.set_index("periodo")["margen_%"])
+        st.line_chart(_graf(df_comb, "margen_%"))
         mejor_mes = df_comb.loc[df_comb["margen"].idxmax(), "periodo"] if not df_comb.empty else "N/A"
         peor_mes  = df_comb.loc[df_comb["margen"].idxmin(), "periodo"] if not df_comb.empty else "N/A"
         c1, c2, c3, c4 = st.columns(4)
@@ -856,9 +870,9 @@ def ui_analisis_predictivo_combinado(db):
                               "margen_proy": ing_p - gas_p})
             df_proy = pd.DataFrame(proy)
             st.markdown("**Ingresos vs Gastos proyectados**")
-            st.line_chart(df_proy.set_index("periodo")[["ingresos_proy", "gastos_proy"]])
+            st.line_chart(df_proy.set_index(pd.CategoricalIndex(df_proy["periodo"], categories=df_proy["periodo"].tolist(), ordered=True))[["ingresos_proy", "gastos_proy"]])
             st.markdown("**Margen neto proyectado**")
-            st.bar_chart(df_proy.set_index("periodo")["margen_proy"])
+            st.bar_chart(_graf(df_proy, "margen_proy"))
             df_proy2 = df_proy.copy()
             for col in ["ingresos_proy", "gastos_proy", "margen_proy"]:
                 df_proy2[col] = df_proy2[col].map(moneda)
