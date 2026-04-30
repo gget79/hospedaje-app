@@ -46,7 +46,7 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
     # ===================== Formulario arriba =====================
     st.subheader("Formulario")
 
-    with st.form("form_reserva", clear_on_submit=False):
+    with st.container(border=True):
         # FILA 1
         c1, c2, c3 = st.columns(3)
         with c1:
@@ -63,7 +63,6 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
         with c2:
             R["celular"] = st.text_input("Celular", value=R["celular"], key="r_celular")
         with c3:
-            # Departamento por número visible
             idx_def = dep_opciones.index(R["dep_num"]) if R["dep_num"] in dep_opciones else 0
             R["dep_num"] = st.selectbox("Departamento", dep_opciones, index=idx_def, key="r_dep_num")
 
@@ -74,13 +73,9 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
         with c2:
             R["f_fin"] = st.date_input("Fecha fin", value=R["f_fin"], key="r_f_fin")
         with c3:
-            # Editor tipo dinero (en grilla NumberColumn con formato; aquí number_input)
             R["valor_noche"] = st.number_input("Valor por noche", min_value=0.0, value=float(R["valor_noche"]), step=5.0, key="r_valor_noche")
 
-        # FILA 4 (resumen + importes)
-        noches = calcular_noches(R["f_ini"], R["f_fin"])
-        total_estadia = noches * float(R["valor_noche"])
-
+        # FILA 4
         c1, c2, c3 = st.columns(3)
         with c1:
             R["valor_limpieza"] = st.number_input("Valor limpieza", min_value=0.0, value=float(R["valor_limpieza"]), step=1.0, key="r_valor_limpieza")
@@ -94,15 +89,20 @@ def ui_reservas(repo_reservas: ReservasRepo, repo_departamentos: DepartamentosRe
         with c1:
             R["estado"] = st.selectbox("Estado", ["Pendiente", "Confirmada", "Completada", "Cancelada"], index=["Pendiente","Confirmada","Completada","Cancelada"].index(R["estado"]))
 
+        # ── Totales en tiempo real (se recalculan en cada interacción) ──
+        noches = calcular_noches(R["f_ini"], R["f_fin"])
+        total_estadia = noches * float(R["valor_noche"])
+        total_aprox = total_estadia + float(R["valor_limpieza"])
+
         st.info(
             f"**Noches:** {noches} | "
             f"**Total estadía:** {moneda(total_estadia)} | "
-            f"**Total aprox.:** {moneda(total_estadia + float(R['valor_limpieza']))}"
+            f"**Total aprox.:** {moneda(total_aprox)}"
         )
 
         b1, b2 = st.columns([1, 1])
-        guardar = b1.form_submit_button("💾 Guardar")
-        limpiar = b2.form_submit_button("🧹 Limpiar")
+        guardar = b1.button("💾 Guardar", key="btn_guardar", use_container_width=True)
+        limpiar = b2.button("🧹 Limpiar", key="btn_limpiar", use_container_width=True)
 
     # Guardar (INSERT/UPDATE)
     if guardar:
