@@ -21,6 +21,7 @@ from ui import catalogos as cat
 from ui.reservas import ui_reservas
 from ui.ingresos import ui_autorizacion_ingreso
 from ui.reportes import ui_rep_reservas, ui_rep_gastos, ui_rep_diario, ui_rep_disponibilidad, ui_rep_reservas_saldo_pendiente
+from ui.predictivo import ui_analisis_predictivo
 
 
 # --- Helpers de autenticación de Administrador ---
@@ -197,7 +198,7 @@ elif seccion == "Reportes":
         st.session_state["nav_seccion_prev"] = "Reportes"
     submenu = st.sidebar.radio(
         "Reportes",
-        ["Reservas", "Gastos", "Diario", "Disponibilidad", "Reservas con saldo pendiente"],
+        ["Reservas", "Gastos", "Diario", "Disponibilidad", "Reservas con saldo pendiente", "Análisis predictivo"],
         index=0,
         key="nav_reportes"
     )
@@ -270,3 +271,5 @@ elif seccion == "Reportes":
         ui_rep_disponibilidad(db)    
     elif submenu == "Reservas con saldo pendiente":
         ui_rep_reservas_saldo_pendiente(db)
+    elif submenu == "Análisis predictivo":
+        ui_analisis_predictivo(db)
