@@ -68,11 +68,11 @@ def _color_bar(valores: pd.Series, col_name: str) -> pd.DataFrame:
 # ─────────────────────────────────────────────
 #  Sección principal
 # ─────────────────────────────────────────────
-def ui_analisis_predictivo(db: Database):
-    st.header("🤖 Análisis Predictivo de Reservas")
+def ui_analisis_predictivo_ingresos(db: Database):
+    st.header("🤖 Análisis Predictivo — Ingresos")
     st.caption(
-        "Tendencias históricas, comparaciones entre períodos y proyecciones "
-        "para anticipar demanda y optimizar decisiones."
+        "Tendencias históricas de reservas e ingresos, comparaciones entre períodos "
+        "y proyecciones para anticipar demanda y optimizar decisiones."
     )
 
     df = _cargar_reservas(db)
@@ -512,3 +512,389 @@ def ui_analisis_predictivo(db: Database):
         c2.metric("Estadía promedio", f"{avg_noches_rec:.1f} n.")
         c3.metric("Personas/reserva", f"{avg_personas_rec:.1f}")
         c4.metric("Mes pico", MESES_ES[mes_pico])
+
+
+# =================================================================
+#  ANÁLISIS PREDICTIVO — GASTOS
+# =================================================================
+
+def _cargar_gastos(db):
+    sql = (
+        "SELECT g.numero, g.fecha, g.valor, g.detalle, "
+        "c.descripcion AS concepto "
+        "FROM gastos g "
+        "JOIN conceptoGastos c ON c.codigo = g.codConcepto "
+        "ORDER BY g.fecha;"
+    )
+    df = db.fetch_df(sql)
+    if df.empty:
+        return df
+    df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
+    df["valor"] = pd.to_numeric(df["valor"], errors="coerce").fillna(0)
+    df["anio"] = df["fecha"].dt.year
+    df["mes"] = df["fecha"].dt.month
+    df["mes_nombre"] = df["mes"].map(MESES_ES)
+    return df
+
+
+def ui_analisis_predictivo_gastos(db):
+    st.header("\U0001f4b8 Análisis Predictivo \u2014 Gastos")
+    st.caption("Tendencias, comparaciones y proyecciones de gastos para optimizar el control de costos.")
+
+    df = _cargar_gastos(db)
+    if df.empty:
+        st.info("No hay gastos registrados aún.")
+        return
+
+    anios = sorted(df["anio"].unique().tolist())
+
+    tabs = st.tabs([
+        "\U0001f4c8 Tendencia general",
+        "\U0001f4c5 Comparación mensual",
+        "\U0001f501 Año vs Año",
+        "\U0001f3f7\ufe0f Por concepto",
+        "\U0001f52e Proyección gastos",
+        "\U0001f4a1 Recomendaciones",
+    ])
+
+    with tabs[0]:
+        st.subheader("Gastos por mes (histórico completo)")
+        df_mes = (
+            df.groupby(["anio", "mes"])
+            .agg(total=("valor", "sum"), cantidad=("numero", "count"))
+            .reset_index()
+        )
+        df_mes["periodo"] = df_mes.apply(
+            lambda r: f"{MESES_ES[int(r['mes'])]}-{int(r['anio'])}", axis=1
+        )
+        df_mes = df_mes.sort_values(["anio", "mes"])
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Gasto total por mes ($)**")
+            st.bar_chart(df_mes.set_index("periodo")["total"])
+        with c2:
+            st.markdown("**Cantidad de gastos por mes**")
+            st.bar_chart(df_mes.set_index("periodo")["cantidad"])
+        st.markdown("**Evolución acumulada de gastos**")
+        st.area_chart(df_mes.set_index("periodo")["total"])
+        with st.expander("Ver tabla detallada"):
+            df_show = df_mes[["periodo", "total", "cantidad"]].copy()
+            df_show["total"] = df_show["total"].map(moneda)
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+    with tabs[1]:
+        st.subheader("Comparación del mismo mes entre años")
+        mes_sel = st.selectbox(
+            "Mes a comparar", list(MESES_ES.keys()),
+            format_func=lambda m: MESES_ES[m],
+            index=pd.Timestamp.today().month - 1, key="gas_mes_comp"
+        )
+        df_comp = df[df["mes"] == mes_sel].groupby("anio").agg(
+            total=("valor", "sum"), cantidad=("numero", "count"),
+            promedio=("valor", "mean")).reset_index()
+        if df_comp.empty:
+            st.info(f"Sin datos para {MESES_ES[mes_sel]}.")
+        else:
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(f"**Gasto total en {MESES_ES[mes_sel]} por año ($)**")
+                st.bar_chart(df_comp.set_index("anio")["total"])
+            with c2:
+                st.markdown(f"**Cantidad de gastos en {MESES_ES[mes_sel]} por año**")
+                st.bar_chart(df_comp.set_index("anio")["cantidad"])
+            df_comp2 = df_comp.copy()
+            df_comp2["total"] = df_comp2["total"].map(moneda)
+            df_comp2["promedio"] = df_comp2["promedio"].map(moneda)
+            df_comp2.columns = ["Año", "Total gastos", "Cantidad", "Promedio por gasto"]
+            st.dataframe(df_comp2, use_container_width=True, hide_index=True)
+
+    with tabs[2]:
+        st.subheader("Comparación año vs año")
+        if len(anios) < 2:
+            st.info("Necesitás datos de al menos 2 años.")
+        else:
+            col1, col2 = st.columns(2)
+            anio_a = col1.selectbox("Año A", anios, index=len(anios)-2, key="gas_anio_a")
+            anio_b = col2.selectbox("Año B", anios, index=len(anios)-1, key="gas_anio_b")
+            def res_gas(a):
+                d = df[df["anio"] == a].groupby("mes").agg(total=("valor", "sum")).reset_index()
+                return d.set_index("mes")
+            da, db_ = res_gas(anio_a), res_gas(anio_b)
+            todos = sorted(set(da.index) | set(db_.index))
+            comp = pd.DataFrame({"mes": todos})
+            comp["mes_nombre"] = comp["mes"].map(MESES_ES)
+            comp[f"gas_{anio_a}"] = comp["mes"].map(da["total"]).fillna(0)
+            comp[f"gas_{anio_b}"] = comp["mes"].map(db_["total"]).fillna(0)
+            comp = comp.set_index("mes_nombre")
+            st.markdown("**Gastos por mes ($)**")
+            st.bar_chart(comp[[f"gas_{anio_a}", f"gas_{anio_b}"]])
+            comp["var_%"] = np.where(
+                comp[f"gas_{anio_a}"] > 0,
+                ((comp[f"gas_{anio_b}"] - comp[f"gas_{anio_a}"]) / comp[f"gas_{anio_a}"] * 100).round(1),
+                np.nan
+            )
+            with st.expander("Ver tabla con variación %"):
+                st.dataframe(comp.reset_index(), use_container_width=True, hide_index=True)
+
+    with tabs[3]:
+        st.subheader("Gastos por concepto")
+        df_conc = df.groupby("concepto").agg(
+            total=("valor", "sum"), cantidad=("numero", "count"),
+            promedio=("valor", "mean")).reset_index().sort_values("total", ascending=False)
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Total por concepto ($)**")
+            st.bar_chart(df_conc.set_index("concepto")["total"])
+        with c2:
+            st.markdown("**Frecuencia por concepto**")
+            st.bar_chart(df_conc.set_index("concepto")["cantidad"])
+        with st.expander("Ver tabla completa"):
+            df_conc2 = df_conc.copy()
+            df_conc2["total"] = df_conc2["total"].map(moneda)
+            df_conc2["promedio"] = df_conc2["promedio"].map(moneda)
+            df_conc2.columns = ["Concepto", "Total", "Cantidad", "Promedio"]
+            st.dataframe(df_conc2, use_container_width=True, hide_index=True)
+
+    with tabs[4]:
+        st.subheader("\U0001f52e Proyección de gastos \u2014 próximos 6 meses")
+        df_hist = (
+            df.groupby(["anio", "mes"]).agg(total=("valor", "sum"))
+            .reset_index().sort_values(["anio", "mes"])
+        )
+        df_hist["t"] = np.arange(len(df_hist))
+        if len(df_hist) < 3:
+            st.info("Se necesitan al menos 3 meses de datos.")
+        else:
+            m_g, b_g = _regresion_lineal(df_hist["t"].values, df_hist["total"].values)
+            ultimo_anio = int(df_hist["anio"].iloc[-1])
+            ultimo_mes = int(df_hist["mes"].iloc[-1])
+            ultimo_t = int(df_hist["t"].iloc[-1])
+            proy = []
+            for i in range(1, 7):
+                t_fut = ultimo_t + i
+                mes_fut = ((ultimo_mes - 1 + i) % 12) + 1
+                anio_fut = ultimo_anio + ((ultimo_mes - 1 + i) // 12)
+                proy.append({
+                    "periodo": f"{MESES_ES[mes_fut]}-{anio_fut}",
+                    "gastos_proyectados": max(m_g * t_fut + b_g, 0)
+                })
+            df_proy = pd.DataFrame(proy)
+            st.bar_chart(df_proy.set_index("periodo")["gastos_proyectados"])
+            df_proy2 = df_proy.copy()
+            df_proy2["gastos_proyectados"] = df_proy2["gastos_proyectados"].map(moneda)
+            df_proy2.columns = ["Período", "Gastos proyectados"]
+            st.dataframe(df_proy2, use_container_width=True, hide_index=True)
+            tend = "\U0001f4c8 en aumento" if m_g > 0 else "\U0001f4c9 en descenso"
+            st.info(f"**Tendencia de gastos:** {tend} \u2014 variación mensual promedio: {moneda(abs(m_g))}")
+
+    with tabs[5]:
+        st.subheader("\U0001f4a1 Recomendaciones de control de gastos")
+        df_conc_rec = (
+            df.groupby("concepto").agg(total=("valor", "sum"))
+            .reset_index().sort_values("total", ascending=False)
+        )
+        conc_top = df_conc_rec.iloc[0]["concepto"] if not df_conc_rec.empty else "N/A"
+        total_gastos = df["valor"].sum()
+        prom_mensual = df.groupby(["anio", "mes"])["valor"].sum().mean()
+        df_hist2 = (
+            df.groupby(["anio", "mes"]).agg(total=("valor", "sum"))
+            .reset_index().sort_values(["anio", "mes"])
+        )
+        tend_rec = None
+        delta_pct = 0
+        if len(df_hist2) >= 6:
+            ult3 = df_hist2["total"].iloc[-3:].mean()
+            ant3 = df_hist2["total"].iloc[-6:-3].mean()
+            tend_rec = "aumentando" if ult3 > ant3 else "disminuyendo"
+            delta_pct = abs((ult3 - ant3) / ant3 * 100) if ant3 > 0 else 0
+        mes_gas_alto = int(df.groupby("mes")["valor"].sum().idxmax())
+        recs = [
+            f"**Concepto de mayor gasto:** {conc_top}. Revisá si hay oportunidad de negociar precios o reducir frecuencia.",
+            f"**Gasto mensual promedio:** {moneda(prom_mensual)}. Usá este valor como presupuesto base.",
+            f"**Total histórico de gastos:** {moneda(total_gastos)}.",
+            f"**Mes de mayor gasto histórico:** {MESES_ES[mes_gas_alto]}. Planificá reservas de caja con anticipación.",
+        ]
+        if tend_rec:
+            recs.append(f"**Tendencia reciente:** Los gastos están **{tend_rec}** un **{delta_pct:.1f}%** vs los 3 meses anteriores.")
+        for i, r in enumerate(recs, 1):
+            st.markdown(f"{i}. {r}")
+        st.markdown("---")
+        st.markdown("### \U0001f4ca KPIs de gastos")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total gastos", moneda(total_gastos))
+        c2.metric("Promedio mensual", moneda(prom_mensual))
+        c3.metric("Concepto top", conc_top[:15] if len(conc_top) > 15 else conc_top)
+        c4.metric("Mes más caro", MESES_ES[mes_gas_alto])
+
+
+# =================================================================
+#  ANÁLISIS PREDICTIVO — INGRESOS VS GASTOS (COMBINADO)
+# =================================================================
+
+def ui_analisis_predictivo_combinado(db):
+    st.header("\u2696\ufe0f Análisis Predictivo \u2014 Ingresos vs Gastos")
+    st.caption(
+        "Comparación directa entre ingresos y gastos para tomar decisiones "
+        "informadas sobre rentabilidad, flujo de caja y planificación financiera."
+    )
+
+    df_res = _cargar_reservas(db)
+    df_gas = _cargar_gastos(db)
+
+    if df_res.empty and df_gas.empty:
+        st.info("No hay datos suficientes para el análisis combinado.")
+        return
+
+    def _agg_ing(df):
+        if df.empty:
+            return pd.DataFrame(columns=["anio", "mes", "ingresos"])
+        return df.groupby(["anio", "mes"]).agg(ingresos=("ingreso_total", "sum")).reset_index()
+
+    def _agg_gas(df):
+        if df.empty:
+            return pd.DataFrame(columns=["anio", "mes", "gastos"])
+        return df.groupby(["anio", "mes"]).agg(gastos=("valor", "sum")).reset_index()
+
+    df_comb = pd.merge(_agg_ing(df_res), _agg_gas(df_gas), on=["anio", "mes"], how="outer").fillna(0)
+    df_comb["periodo"] = df_comb.apply(
+        lambda r: f"{MESES_ES[int(r['mes'])]}-{int(r['anio'])}", axis=1
+    )
+    df_comb["margen"] = df_comb["ingresos"] - df_comb["gastos"]
+    df_comb["margen_%"] = np.where(
+        df_comb["ingresos"] > 0,
+        (df_comb["margen"] / df_comb["ingresos"] * 100).round(1), 0
+    )
+    df_comb = df_comb.sort_values(["anio", "mes"])
+
+    tabs = st.tabs([
+        "\U0001f4ca Ingresos vs Gastos",
+        "\U0001f4b0 Rentabilidad mensual",
+        "\U0001f501 Año vs Año",
+        "\U0001f52e Proyección financiera",
+        "\U0001f4a1 Decisiones clave",
+    ])
+
+    with tabs[0]:
+        st.subheader("Ingresos vs Gastos por mes")
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Ingresos ($)**")
+            st.bar_chart(df_comb.set_index("periodo")["ingresos"])
+        with c2:
+            st.markdown("**Gastos ($)**")
+            st.bar_chart(df_comb.set_index("periodo")["gastos"])
+        st.markdown("**Comparación directa Ingresos vs Gastos**")
+        st.line_chart(df_comb.set_index("periodo")[["ingresos", "gastos"]])
+        with st.expander("Ver tabla"):
+            df_show = df_comb[["periodo", "ingresos", "gastos", "margen", "margen_%"]].copy()
+            for col in ["ingresos", "gastos", "margen"]:
+                df_show[col] = df_show[col].map(moneda)
+            df_show.columns = ["Período", "Ingresos", "Gastos", "Margen neto", "Margen %"]
+            st.dataframe(df_show, use_container_width=True, hide_index=True)
+
+    with tabs[1]:
+        st.subheader("Rentabilidad mensual (margen neto)")
+        st.markdown("**Margen neto por mes (Ingresos \u2212 Gastos)**")
+        st.bar_chart(df_comb.set_index("periodo")["margen"])
+        st.markdown("**Margen % sobre ingresos**")
+        st.line_chart(df_comb.set_index("periodo")["margen_%"])
+        mejor_mes = df_comb.loc[df_comb["margen"].idxmax(), "periodo"] if not df_comb.empty else "N/A"
+        peor_mes  = df_comb.loc[df_comb["margen"].idxmin(), "periodo"] if not df_comb.empty else "N/A"
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Margen total histórico", moneda(df_comb["margen"].sum()))
+        c2.metric("Margen promedio mensual", moneda(df_comb["margen"].mean()))
+        c3.metric("Mejor mes", mejor_mes)
+        c4.metric("Peor mes", peor_mes)
+
+    with tabs[2]:
+        st.subheader("Comparación año vs año \u2014 Ingresos, Gastos y Margen")
+        anios_comb = sorted(df_comb["anio"].unique().tolist())
+        if len(anios_comb) < 2:
+            st.info("Necesitás datos de al menos 2 años.")
+        else:
+            col1, col2 = st.columns(2)
+            anio_a = col1.selectbox("Año A", anios_comb, index=len(anios_comb)-2, key="comb_anio_a")
+            anio_b = col2.selectbox("Año B", anios_comb, index=len(anios_comb)-1, key="comb_anio_b")
+            def res_comb(a):
+                return df_comb[df_comb["anio"] == a].set_index("mes")[["ingresos", "gastos", "margen"]]
+            da, db_ = res_comb(anio_a), res_comb(anio_b)
+            todos = sorted(set(da.index) | set(db_.index))
+            comp = pd.DataFrame({"mes": todos})
+            comp["mes_nombre"] = comp["mes"].map(MESES_ES)
+            for col in ["ingresos", "gastos", "margen"]:
+                comp[f"{col}_{anio_a}"] = comp["mes"].map(da[col] if col in da.columns else pd.Series(dtype=float)).fillna(0)
+                comp[f"{col}_{anio_b}"] = comp["mes"].map(db_[col] if col in db_.columns else pd.Series(dtype=float)).fillna(0)
+            comp = comp.set_index("mes_nombre")
+            st.markdown("**Ingresos**")
+            st.bar_chart(comp[[f"ingresos_{anio_a}", f"ingresos_{anio_b}"]])
+            st.markdown("**Gastos**")
+            st.bar_chart(comp[[f"gastos_{anio_a}", f"gastos_{anio_b}"]])
+            st.markdown("**Margen neto**")
+            st.line_chart(comp[[f"margen_{anio_a}", f"margen_{anio_b}"]])
+
+    with tabs[3]:
+        st.subheader("\U0001f52e Proyección financiera \u2014 próximos 6 meses")
+        df_c2 = df_comb.copy().reset_index(drop=True)
+        df_c2["t"] = np.arange(len(df_c2))
+        if len(df_c2) < 3:
+            st.info("Se necesitan al menos 3 meses de datos.")
+        else:
+            m_i, b_i   = _regresion_lineal(df_c2["t"].values, df_c2["ingresos"].values)
+            m_g2, b_g2 = _regresion_lineal(df_c2["t"].values, df_c2["gastos"].values)
+            ultimo_anio = int(df_c2["anio"].iloc[-1])
+            ultimo_mes  = int(df_c2["mes"].iloc[-1])
+            ultimo_t    = int(df_c2["t"].iloc[-1])
+            proy = []
+            for i in range(1, 7):
+                t_fut   = ultimo_t + i
+                mes_fut = ((ultimo_mes - 1 + i) % 12) + 1
+                anio_fut = ultimo_anio + ((ultimo_mes - 1 + i) // 12)
+                ing_p = max(m_i * t_fut + b_i, 0)
+                gas_p = max(m_g2 * t_fut + b_g2, 0)
+                proy.append({"periodo": f"{MESES_ES[mes_fut]}-{anio_fut}",
+                              "ingresos_proy": ing_p, "gastos_proy": gas_p,
+                              "margen_proy": ing_p - gas_p})
+            df_proy = pd.DataFrame(proy)
+            st.markdown("**Ingresos vs Gastos proyectados**")
+            st.line_chart(df_proy.set_index("periodo")[["ingresos_proy", "gastos_proy"]])
+            st.markdown("**Margen neto proyectado**")
+            st.bar_chart(df_proy.set_index("periodo")["margen_proy"])
+            df_proy2 = df_proy.copy()
+            for col in ["ingresos_proy", "gastos_proy", "margen_proy"]:
+                df_proy2[col] = df_proy2[col].map(moneda)
+            df_proy2.columns = ["Período", "Ingresos proy.", "Gastos proy.", "Margen proy."]
+            st.dataframe(df_proy2, use_container_width=True, hide_index=True)
+            tend_i = "\U0001f4c8 creciendo" if m_i  > 0 else "\U0001f4c9 bajando"
+            tend_g = "\U0001f4c8 aumentando" if m_g2 > 0 else "\U0001f4c9 bajando"
+            st.info(f"**Ingresos:** {tend_i} ({moneda(abs(m_i))}/mes)  \n**Gastos:** {tend_g} ({moneda(abs(m_g2))}/mes)")
+
+    with tabs[4]:
+        st.subheader("\U0001f4a1 Decisiones clave basadas en datos")
+        total_ing  = df_comb["ingresos"].sum()
+        total_gas  = df_comb["gastos"].sum()
+        margen_tot = total_ing - total_gas
+        ratio      = (total_gas / total_ing * 100) if total_ing > 0 else 0
+        prom_ing_m = df_comb["ingresos"].mean()
+        prom_gas_m = df_comb["gastos"].mean()
+        meses_def  = df_comb[df_comb["margen"] < 0]
+        meses_sup  = df_comb[df_comb["margen"] >= 0]
+        recs = [
+            f"**Rentabilidad global:** Por cada $100 de ingresos, gastás ${ratio:.1f}. "
+            + ("✅ Margen saludable." if ratio < 60 else "⚠️ Revisá los gastos, el ratio es alto."),
+            f"**Flujo promedio mensual:** Ingresos {moneda(prom_ing_m)} \u2014 Gastos {moneda(prom_gas_m)} \u2014 Margen {moneda(prom_ing_m - prom_gas_m)}.",
+            f"**Meses en déficit:** {len(meses_def)} de {len(df_comb)}. "
+            + (f"Períodos: {', '.join(meses_def['periodo'].tolist()[:5])}." if not meses_def.empty else "Ninguno. ✅"),
+            f"**Meses en superávit:** {len(meses_sup)}. Usá esos excedentes para cubrir meses de baja demanda.",
+        ]
+        if not df_comb.empty:
+            recs.append(f"**Mejor mes financiero:** {df_comb.loc[df_comb['margen'].idxmax(),'periodo']}. Analizá qué lo hizo exitoso y replicalo.")
+            recs.append(f"**Mes más crítico:** {df_comb.loc[df_comb['margen'].idxmin(),'periodo']}. Planificá acciones preventivas para ese período.")
+        for i, r in enumerate(recs, 1):
+            st.markdown(f"{i}. {r}")
+        st.markdown("---")
+        st.markdown("### \U0001f4ca KPIs financieros globales")
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Ingresos totales", moneda(total_ing))
+        c2.metric("Gastos totales", moneda(total_gas))
+        c3.metric("Margen neto total", moneda(margen_tot))
+        c4.metric("Ratio gasto/ingreso", f"{ratio:.1f}%")
