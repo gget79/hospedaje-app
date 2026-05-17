@@ -97,12 +97,13 @@ def ui_admin_limpiar_bd(db: Database):
             st.error(f"Ocurrió un error al limpiar la base: {e}")
 
 def ui_admin_limpiar_bd_2(db: Database):
-    st.header("🧨 Administración → Limpiar base de datos")
+    st.header("🧨 Administración → Limpiar base de datos TRX")
 
     st.warning(
-        "Esta acción **eliminará** la información de **Usuarios, Propietarios, "
-        "Departamentos, Conceptos de Gastos, Gastos y Reservas**. "
-        "Se **conservarán** los registros de **perfilUsuarios**."
+        "Esta acción **eliminará** las transacciones: **Reservas, Abonos, Gastos, "
+        "Ajustes contables y Saldo inicial**. "
+        "Se **conservarán** los catálogos (Propietarios, Departamentos, Conceptos) "
+        "y los perfiles de usuario."
     )
     st.caption("También se reiniciarán los autoincrementos de las tablas limpiadas.")
 
