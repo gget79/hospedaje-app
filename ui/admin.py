@@ -5,7 +5,7 @@ from core.db import Database
 from core.models import Usuario
 from core.repositories import PerfilUsuariosRepo, UsuariosRepo
 
-from datetime import date
+from datetime import date, timedelta
 import pandas as pd
 from core.repositories import CajaRepo
 from core.utils import calcular_noches
@@ -517,4 +517,182 @@ def ui_admin_ajustes_contables(db: Database, usuario_actual: str = ""):
                     S["monto"] = float(orig["monto"])
                     S["concepto"] = str(orig["concepto"] or "")
                     S["detalle"] = str(orig["detalle"] or "")
+                    st.rerun()
+
+
+def ui_admin_bloqueos_depto(db: Database):
+    st.header("🔒 Administración → Bloqueos de Departamento")
+    st.caption(
+        "Bloqueá un departamento por uso del dueño u otro motivo. "
+        "Los días bloqueados aparecen en el calendario de disponibilidad como **🟠 Dueño**."
+    )
+
+    # Asegurar tabla
+    db.db_run_safe("""
+        CREATE TABLE IF NOT EXISTS bloqueosDepto (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            codigoDepartamento INTEGER NOT NULL,
+            fechaInicio TEXT NOT NULL,
+            fechaFin TEXT NOT NULL,
+            motivo TEXT NOT NULL DEFAULT 'Uso dueño'
+        );
+    """)
+
+    # Feedback persistente
+    if st.session_state.get("_bloqueo_toast"):
+        st.success(st.session_state.pop("_bloqueo_toast"))
+
+    # Cargar departamentos
+    deps_df = db.fetch_df("SELECT codigo, numero FROM departamentos ORDER BY numero;")
+    if deps_df.empty:
+        st.warning("No hay departamentos registrados.")
+        return
+
+    dep_map = {f"Depto {r['numero']}": int(r["codigo"]) for _, r in deps_df.iterrows()}
+
+    # Estado formulario
+    S = st.session_state.setdefault("_bloqueo_state", {})
+    S.setdefault("edit_id", None)
+    S.setdefault("dep_label", list(dep_map.keys())[0])
+    S.setdefault("f_ini", date.today())
+    S.setdefault("f_fin", date.today())
+    S.setdefault("motivo", "Uso dueño")
+
+    if S["edit_id"]:
+        st.warning(f"✏️ Editando bloqueo **#{S['edit_id']}**")
+
+    with st.container(border=True):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            dep_label = st.selectbox(
+                "Departamento",
+                list(dep_map.keys()),
+                index=list(dep_map.keys()).index(S["dep_label"]) if S["dep_label"] in dep_map else 0,
+                key="bl_dep"
+            )
+        with c2:
+            S["f_ini"] = st.date_input("Fecha inicio bloqueo", value=S["f_ini"], key="bl_fi")
+        with c3:
+            S["f_fin"] = st.date_input("Fecha fin bloqueo", value=S["f_fin"], key="bl_ff",
+                                        help="El último día bloqueado es el anterior a esta fecha (igual que reservas).")
+
+        S["motivo"] = st.text_input(
+            "Motivo", value=S["motivo"], key="bl_motivo",
+            placeholder="Uso dueño, Mantenimiento, Refacción..."
+        )
+
+        if S["f_ini"] < S["f_fin"]:
+            dias = (S["f_fin"] - S["f_ini"]).days
+            st.info(f"🔒 Se bloquearán **{dias} día(s)** del depto **{dep_label}** — del {S['f_ini']} al {S['f_fin'] - timedelta(days=1)}")
+        else:
+            st.warning("La fecha fin debe ser posterior a la fecha inicio.")
+
+        b1, b2 = st.columns(2)
+        guardar = b1.button("💾 Guardar bloqueo", key="bl_guardar", use_container_width=True)
+        limpiar = b2.button("🧹 Limpiar", key="bl_limpiar", use_container_width=True)
+
+    if guardar:
+        if S["f_fin"] <= S["f_ini"]:
+            st.error("La fecha fin debe ser posterior a la fecha inicio.")
+        elif not S["motivo"].strip():
+            st.warning("El motivo es obligatorio.")
+        else:
+            cod_dep = dep_map[dep_label]
+            if S["edit_id"]:
+                db.run(
+                    "UPDATE bloqueosDepto SET codigoDepartamento=?, fechaInicio=?, fechaFin=?, motivo=? WHERE id=?;",
+                    (cod_dep, str(S["f_ini"]), str(S["f_fin"]), S["motivo"].strip(), int(S["edit_id"]))
+                )
+                st.session_state["_bloqueo_toast"] = f"✅ Bloqueo #{S['edit_id']} actualizado."
+            else:
+                db.run(
+                    "INSERT INTO bloqueosDepto (codigoDepartamento, fechaInicio, fechaFin, motivo) VALUES (?,?,?,?);",
+                    (cod_dep, str(S["f_ini"]), str(S["f_fin"]), S["motivo"].strip())
+                )
+                dias = (S["f_fin"] - S["f_ini"]).days
+                st.session_state["_bloqueo_toast"] = f"✅ Bloqueo registrado: {dep_label} por {dias} día(s)."
+
+            S["edit_id"] = None
+            S["dep_label"] = list(dep_map.keys())[0]
+            S["f_ini"] = date.today()
+            S["f_fin"] = date.today()
+            S["motivo"] = "Uso dueño"
+            st.rerun()
+
+    if limpiar:
+        S["edit_id"] = None
+        S["dep_label"] = list(dep_map.keys())[0]
+        S["f_ini"] = date.today()
+        S["f_fin"] = date.today()
+        S["motivo"] = "Uso dueño"
+        st.rerun()
+
+    # Listado
+    st.subheader("Bloqueos activos")
+    df_bl = db.fetch_df("""
+        SELECT b.id, d.numero AS departamento, b.fechaInicio, b.fechaFin,
+               b.motivo,
+               (julianday(b.fechaFin) - julianday(b.fechaInicio)) AS dias
+        FROM bloqueosDepto b
+        JOIN departamentos d ON d.codigo = b.codigoDepartamento
+        ORDER BY b.fechaInicio DESC, b.id DESC;
+    """)
+
+    if df_bl is None or df_bl.empty:
+        st.info("No hay bloqueos registrados.")
+        return
+
+    df_bl["Acción"] = "—"
+    try:
+        accion_col = st.column_config.SelectboxColumn("Acción", options=["—", "✏️ Editar", "🗑️ Eliminar"])
+    except Exception:
+        accion_col = st.column_config.TextColumn("Acción")
+
+    edited = st.data_editor(
+        df_bl[["id", "departamento", "fechaInicio", "fechaFin", "dias", "motivo", "Acción"]],
+        key="bl_grid",
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        column_config={
+            "id":           st.column_config.NumberColumn("N°", disabled=True),
+            "departamento": st.column_config.TextColumn("Depto", disabled=True),
+            "fechaInicio":  st.column_config.TextColumn("Inicio", disabled=True),
+            "fechaFin":     st.column_config.TextColumn("Fin", disabled=True),
+            "dias":         st.column_config.NumberColumn("Días", disabled=True),
+            "motivo":       st.column_config.TextColumn("Motivo", disabled=True),
+            "Acción":       accion_col,
+        }
+    )
+
+    cA1, cA2 = st.columns([1, 4])
+    with cA1:
+        confirmar_del = st.checkbox("Confirmo eliminación", key="bl_confirm_del")
+    with cA2:
+        if st.button("⚡ Aplicar acciones", use_container_width=True, key="bl_aplicar"):
+            act = edited[edited["Acción"].isin(["✏️ Editar", "🗑️ Eliminar"])].copy()
+            if act.empty:
+                st.info("No hay acciones seleccionadas.")
+            else:
+                dels = act[act["Acción"] == "🗑️ Eliminar"]
+                if not dels.empty:
+                    if not confirmar_del:
+                        st.warning("Marcá 'Confirmo eliminación' para eliminar.")
+                    else:
+                        for _, r in dels.iterrows():
+                            db.run("DELETE FROM bloqueosDepto WHERE id=?;", (int(r["id"]),))
+                        st.session_state["_bloqueo_toast"] = f"✅ {len(dels)} bloqueo(s) eliminado(s)."
+                        st.rerun()
+
+                eds = act[act["Acción"] == "✏️ Editar"]
+                if not eds.empty:
+                    row_id = int(eds.iloc[-1]["id"])
+                    orig = df_bl[df_bl["id"] == row_id].iloc[0]
+                    dep_num = str(orig["departamento"])
+                    dep_lbl = f"Depto {dep_num}"
+                    S["edit_id"] = row_id
+                    S["dep_label"] = dep_lbl if dep_lbl in dep_map else list(dep_map.keys())[0]
+                    S["f_ini"] = pd.to_datetime(orig["fechaInicio"]).date()
+                    S["f_fin"] = pd.to_datetime(orig["fechaFin"]).date()
+                    S["motivo"] = str(orig["motivo"] or "Uso dueño")
                     st.rerun()

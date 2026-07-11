@@ -445,28 +445,36 @@ class DisponibilidadRepo:
 
     def disponibilidad_por_rango(self, fi: date, ff: date, codigos: Optional[List[int]] = None) -> pd.DataFrame:
         """
-        Devuelve: codigoDepartamento, departamento (numero), fecha (YYYY-MM-DD), ocupado (0/1).
-        Ocupado si existe reserva con: fechaInicio <= d < fechaFin y estado NOT IN ('Cancelada','Anulada').
+        Devuelve: codigoDepartamento, departamento (numero), fecha (YYYY-MM-DD), ocupado (0/1/2).
+        0 = Libre, 1 = Ocupado (reserva), 2 = Dueño (bloqueo manual)
         """
         base_sql = """
         WITH RECURSIVE rango(d) AS (
-            SELECT date(?)              -- fi
+            SELECT date(?)
             UNION ALL
-            SELECT date(d, '+1 day') FROM rango WHERE d < date(?)  -- ff
+            SELECT date(d, '+1 day') FROM rango WHERE d < date(?)
         )
         SELECT
             dpt.codigo AS codigoDepartamento,
             dpt.numero AS departamento,
             r.d        AS fecha,
-            CASE WHEN EXISTS (
-                SELECT 1
-                FROM reservas rsv
-                WHERE rsv.codigoDepartamento = dpt.codigo
-                  AND date(r.d) >= date(rsv.fechaInicio)
-                  AND date(r.d) <  date(rsv.fechaFin)   -- día de salida es libre
-                  AND (rsv.estado IS NULL OR UPPER(rsv.estado) NOT IN ('CANCELADA','ANULADA'))
-            )
-            THEN 1 ELSE 0 END AS ocupado
+            CASE
+                WHEN EXISTS (
+                    SELECT 1 FROM bloqueosDepto b
+                    WHERE b.codigoDepartamento = dpt.codigo
+                      AND date(r.d) >= date(b.fechaInicio)
+                      AND date(r.d) <  date(b.fechaFin)
+                ) THEN 2
+                WHEN EXISTS (
+                    SELECT 1
+                    FROM reservas rsv
+                    WHERE rsv.codigoDepartamento = dpt.codigo
+                      AND date(r.d) >= date(rsv.fechaInicio)
+                      AND date(r.d) <  date(rsv.fechaFin)
+                      AND (rsv.estado IS NULL OR UPPER(rsv.estado) NOT IN ('CANCELADA','ANULADA'))
+                ) THEN 1
+                ELSE 0
+            END AS ocupado
         FROM departamentos dpt
         CROSS JOIN rango r
         {FILTRO}

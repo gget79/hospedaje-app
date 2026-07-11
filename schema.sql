@@ -85,6 +85,17 @@ CREATE TABLE IF NOT EXISTS ajustesContables (
     usuario TEXT
 );
 
+CREATE TABLE IF NOT EXISTS bloqueosDepto (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigoDepartamento INTEGER NOT NULL,
+    fechaInicio TEXT NOT NULL,
+    fechaFin TEXT NOT NULL,
+    motivo TEXT NOT NULL DEFAULT 'Uso dueño',
+    FOREIGN KEY (codigoDepartamento) REFERENCES departamentos(codigo)
+);
+
+CREATE INDEX IF NOT EXISTS ix_bloqueos_depto_fechas ON bloqueosDepto (codigoDepartamento, fechaInicio, fechaFin);
+
 CREATE INDEX IF NOT EXISTS ix_ajustes_fecha ON ajustesContables (fecha);
 
 CREATE INDEX IF NOT EXISTS ix_reservas_depto_ini_fin   ON reservas (codigoDepartamento, fechaInicio, fechaFin);

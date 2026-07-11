@@ -123,6 +123,17 @@ class Database:
                 usuario TEXT
             );
         """)
+
+        # Bloqueos de departamento (uso dueño u otros)
+        self.db_run_safe("""
+            CREATE TABLE IF NOT EXISTS bloqueosDepto (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                codigoDepartamento INTEGER NOT NULL,
+                fechaInicio TEXT NOT NULL,
+                fechaFin TEXT NOT NULL,
+                motivo TEXT NOT NULL DEFAULT 'Uso dueño'
+            );
+        """)
     
 
     # ---- Helpers SQL ----

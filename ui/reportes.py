@@ -277,10 +277,12 @@ def _fin_semana_domingo(d: date) -> date:
 def _color_estado(val: str):
     if val == "Ocupado":
         return "color: red; font-weight: 700;"
+    if val == "Dueño":
+        return "color: orange; font-weight: 700;"
     if val == "Libre":
         return "color: green; font-weight: 700;"
     if val == "—":
-        return "color: #999999;"  # gris para fuera de rango
+        return "color: #999999;"
     return ""
 
 def ui_rep_disponibilidad(db: Database):
@@ -318,7 +320,7 @@ def ui_rep_disponibilidad(db: Database):
     # 3) Render SEMANAL
     st.subheader("Calendario de disponibilidad")
 
-    df["estado"] = df["ocupado"].map(lambda x: "Ocupado" if int(x) else "Libre")
+    df["estado"] = df["ocupado"].map(lambda x: "Dueño" if int(x) == 2 else ("Ocupado" if int(x) == 1 else "Libre"))
     departamentos = (
         df[["departamento"]].drop_duplicates().sort_values(
             by="departamento",
@@ -353,11 +355,12 @@ def ui_rep_disponibilidad(db: Database):
         df_semana = pd.DataFrame(data)
 
         st.markdown(f"**Semana del {w_ini.strftime('%d-%b-%Y')} al {w_fin.strftime('%d-%b-%Y')}**")
-        st.dataframe(
-            df_semana.style.applymap(_color_estado, subset=cols),
-            use_container_width=True,
-            hide_index=True
-        )
+        try:
+            # pandas >= 2.1 usa .map(), versiones anteriores usan .applymap()
+            styled = df_semana.style.map(_color_estado, subset=cols)
+        except AttributeError:
+            styled = df_semana.style.applymap(_color_estado, subset=cols)
+        st.dataframe(styled, use_container_width=True, hide_index=True)
 
         hoja = f"Sem_{w_ini.strftime('%Y%m%d')}_{w_fin.strftime('%Y%m%d')}"
         df_semana.to_excel(writer, index=False, sheet_name=hoja)
