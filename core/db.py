@@ -134,6 +134,17 @@ class Database:
                 motivo TEXT NOT NULL DEFAULT 'Uso dueño'
             );
         """)
+
+        # Preferencias de usuario (filtros persistentes)
+        self.db_run_safe("""
+            CREATE TABLE IF NOT EXISTS preferenciasUsuario (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                usuario TEXT NOT NULL,
+                clave TEXT NOT NULL,
+                valor TEXT NOT NULL,
+                UNIQUE(usuario, clave)
+            );
+        """)
     
 
     # ---- Helpers SQL ----
@@ -159,6 +170,21 @@ class Database:
     def fetch_df(self, sql: str, params=None) -> pd.DataFrame:
         with self.connect() as conn:
             return pd.read_sql_query(sql, conn, params=params or [])
+
+    # ---- Preferencias de usuario ----
+    def get_preferencia(self, usuario: str, clave: str, default: str = "") -> str:
+        rows = self.fetchall(
+            "SELECT valor FROM preferenciasUsuario WHERE usuario=? AND clave=?;",
+            (usuario, clave)
+        )
+        return rows[0][0] if rows else default
+
+    def set_preferencia(self, usuario: str, clave: str, valor: str) -> None:
+        self.run(
+            "INSERT INTO preferenciasUsuario (usuario, clave, valor) VALUES (?,?,?) "
+            "ON CONFLICT(usuario, clave) DO UPDATE SET valor=excluded.valor;",
+            (usuario, clave, valor)
+        )
 
     # ---- Limpieza de datos preservando perfiles FULL----
     def clear_data_preserve_perfiles(self) -> None:

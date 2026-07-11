@@ -288,35 +288,50 @@ def _color_estado(val: str):
 def ui_rep_disponibilidad(db: Database):
     st.header("📅 Reportes → Disponibilidad por Departamento")
 
-    # ── Persistencia del último filtro usado ──
-    F = st.session_state.setdefault("_disp_filtros", {})
-    F.setdefault("f_ini", date(date.today().year, 1, 1))
-    F.setdefault("f_fin", date.today() + timedelta(days=30))
-    F.setdefault("sel", None)   # None = todavía no se guardó ninguna selección
+    usuario = st.session_state.get("usuario_actual", "__default__")
 
     deps = db.fetch_df("SELECT codigo, numero FROM departamentos ORDER BY numero;")
     opciones = [f"{row['numero']} (cod {int(row['codigo'])})" for _, row in deps.iterrows()]
 
-    # Si es la primera vez o los departamentos cambiaron, usar todos como default
-    default_sel = F["sel"] if F["sel"] is not None else opciones
-    # Filtrar por si algún depto fue eliminado desde la última visita
-    default_sel = [s for s in default_sel if s in opciones]
-    if not default_sel:
-        default_sel = opciones
+    # ── Leer filtros persistidos desde BD ──
+    import json
+    try:
+        f_ini_raw = db.get_preferencia(usuario, "disp_f_ini")
+        f_ini_def = date.fromisoformat(f_ini_raw) if f_ini_raw else date(date.today().year, 1, 1)
+    except Exception:
+        f_ini_def = date(date.today().year, 1, 1)
 
-    # 1) Filtros — los valores iniciales vienen del último uso guardado
+    try:
+        f_fin_raw = db.get_preferencia(usuario, "disp_f_fin")
+        f_fin_def = date.fromisoformat(f_fin_raw) if f_fin_raw else date.today() + timedelta(days=30)
+    except Exception:
+        f_fin_def = date.today() + timedelta(days=30)
+
+    try:
+        sel_raw = db.get_preferencia(usuario, "disp_sel")
+        sel_def = json.loads(sel_raw) if sel_raw else opciones
+        sel_def = [s for s in sel_def if s in opciones]  # deptos eliminados
+        if not sel_def:
+            sel_def = opciones
+    except Exception:
+        sel_def = opciones
+
+    # 1) Filtros — valores iniciales desde BD
     c1, c2 = st.columns(2)
     with c1:
-        f_ini = st.date_input("Desde", value=F["f_ini"], key="disp_f_ini")
+        f_ini = st.date_input("Desde", value=f_ini_def, key="disp_f_ini")
     with c2:
-        f_fin = st.date_input("Hasta", value=F["f_fin"], key="disp_f_fin")
+        f_fin = st.date_input("Hasta", value=f_fin_def, key="disp_f_fin")
 
-    sel = st.multiselect("Departamentos (opcional)", opciones, default=default_sel, key="disp_sel")
+    sel = st.multiselect("Departamentos (opcional)", opciones, default=sel_def, key="disp_sel")
 
-    # Guardar siempre el filtro actual para la próxima visita
-    F["f_ini"] = f_ini
-    F["f_fin"] = f_fin
-    F["sel"]   = sel if sel else opciones   # si vacía, guardar "todos"
+    # ── Guardar filtros en BD cada vez que cambian ──
+    try:
+        db.set_preferencia(usuario, "disp_f_ini", f_ini.isoformat())
+        db.set_preferencia(usuario, "disp_f_fin", f_fin.isoformat())
+        db.set_preferencia(usuario, "disp_sel", json.dumps(sel if sel else opciones))
+    except Exception:
+        pass
 
     if f_ini > f_fin:
         st.warning("La fecha **Desde** no puede ser mayor que **Hasta**.")
