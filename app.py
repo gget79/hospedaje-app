@@ -21,7 +21,7 @@ from ui import catalogos as cat
 # Resto de vistas
 from ui.reservas import ui_reservas
 from ui.ingresos import ui_autorizacion_ingreso
-from ui.reportes import ui_rep_reservas, ui_rep_gastos, ui_rep_diario, ui_rep_disponibilidad, ui_rep_reservas_saldo_pendiente
+from ui.reportes import ui_rep_reservas, ui_rep_gastos, ui_rep_diario, ui_rep_disponibilidad, ui_rep_reservas_saldo_pendiente, ui_rep_rentabilidad_neta
 from ui.predictivo import (
     ui_analisis_predictivo_ingresos,
     ui_analisis_predictivo_gastos,
@@ -204,6 +204,7 @@ elif seccion == "Reportes":
     submenu = st.sidebar.radio(
         "Reportes",
         ["Reservas", "Gastos", "Diario", "Disponibilidad", "Reservas con saldo pendiente",
+         "Rentabilidad neta",
          "Análisis predictivo Ingresos", "Análisis predictivo Gastos", "Análisis predictivo Ingresos vs Gastos"],
         index=0,
         key="nav_reportes"
@@ -283,6 +284,8 @@ elif seccion == "Reportes":
         ui_rep_disponibilidad(db)    
     elif submenu == "Reservas con saldo pendiente":
         ui_rep_reservas_saldo_pendiente(db)
+    elif submenu == "Rentabilidad neta":
+        ui_rep_rentabilidad_neta(db)
     elif submenu == "Análisis predictivo Ingresos":
         ui_analisis_predictivo_ingresos(db)
     elif submenu == "Análisis predictivo Gastos":

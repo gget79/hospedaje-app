@@ -435,3 +435,218 @@ def ui_rep_reservas_saldo_pendiente(db: Database):
     total_saldo = float(pd.to_numeric(df["saldoPendiente"], errors="coerce").fillna(0.0).sum())
     st.write(f"- **Reservas con saldo:** {len(df)}")
     st.write(f"- **Saldo pendiente total:** {moneda(total_saldo)}")
+
+
+# =============== Reporte: Rentabilidad neta =================
+def ui_rep_rentabilidad_neta(db: Database):
+    st.header("💵 Reportes → Rentabilidad Neta")
+    st.caption(
+        "Ingreso real que te queda por reserva: estadía cobrada menos pago al dueño "
+        "(solo deptos ajenos) más excedente de limpieza (aplica a todos)."
+    )
+
+    # ── Filtros ──
+    with st.container(border=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            f_ini = st.date_input("Desde", value=date(date.today().year, 1, 1), key="rn_fi")
+        with c2:
+            f_fin = st.date_input("Hasta", value=date.today(), key="rn_ff")
+
+        deps_df = db.fetch_df("SELECT codigo, numero FROM departamentos ORDER BY numero;")
+        opciones_dep = ["Todos"] + [str(r["numero"]) for _, r in deps_df.iterrows()]
+        dep_sel = st.multiselect(
+            "Departamentos", opciones_dep[1:],
+            default=opciones_dep[1:], key="rn_dep"
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            costo_limpieza = st.number_input(
+                "Costo fijo de limpieza ($)",
+                min_value=0.0, value=20.0, step=1.0, key="rn_costo_limp",
+                help="Lo que pagás a quien limpia. El excedente cobrado sobre este valor es ingreso tuyo."
+            )
+        with c2:
+            pago_dueno_std = st.number_input(
+                "Pago estándar al dueño — deptos ajenos ($)",
+                min_value=0.0, value=50.0, step=5.0, key="rn_pago_dueno",
+                help="Valor por defecto que pagás al dueño. Podés ajustarlo reserva por reserva más abajo."
+            )
+
+    if f_ini > f_fin:
+        st.warning("La fecha Desde no puede ser mayor que Hasta.")
+        return
+
+    # ── Cargar reservas con esPropio ──
+    sql = """
+    SELECT r.numero, r.fecha, r.fechaInicio, r.fechaFin,
+           r.numeroNoches, r.totalEstadia, r.valorLimpieza, r.comision,
+           r.nombreCliente, r.estado,
+           d.numero AS departamento,
+           COALESCE(d.esPropio, 1) AS esPropio
+    FROM reservas r
+    JOIN departamentos d ON d.codigo = r.codigoDepartamento
+    WHERE date(r.fechaInicio) >= date(?) AND date(r.fechaInicio) <= date(?)
+      AND UPPER(r.estado) NOT IN ('CANCELADA','ANULADA')
+    ORDER BY r.fechaInicio ASC;
+    """
+    df = db.fetch_df(sql, (iso(f_ini), iso(f_fin)))
+
+    if df is None or df.empty:
+        st.info("Sin datos para el rango seleccionado.")
+        return
+
+    for col in ["totalEstadia", "valorLimpieza", "comision", "esPropio", "numeroNoches"]:
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+
+    # Filtro por departamento
+    if dep_sel:
+        df = df[df["departamento"].isin([str(d) for d in dep_sel])]
+
+    if df.empty:
+        st.info("Sin reservas para los filtros seleccionados.")
+        return
+
+    df["tipo"] = df["esPropio"].apply(lambda x: "Propio" if int(x) == 1 else "Ajeno")
+    df["fechaInicio"] = pd.to_datetime(df["fechaInicio"], errors="coerce")
+
+    # ── Sección 1: Deptos AJENOS — pago al dueño editable por reserva ──
+    st.subheader("1️⃣ Pago al dueño — Departamentos ajenos")
+
+    df_ajenos = df[df["tipo"] == "Ajeno"].copy()
+
+    if df_ajenos.empty:
+        st.info("No hay reservas de departamentos ajenos en el período.")
+        pago_map = {}
+    else:
+        df_aj_edit = df_ajenos[["numero", "departamento", "fechaInicio",
+                                 "nombreCliente", "totalEstadia", "valorLimpieza"]].copy()
+        df_aj_edit["fechaInicio"] = df_aj_edit["fechaInicio"].dt.strftime("%Y-%m-%d")
+        df_aj_edit["pago_dueno"] = pago_dueno_std
+        df_aj_edit = df_aj_edit.rename(columns={
+            "numero": "N° Reserva", "departamento": "Depto",
+            "fechaInicio": "Fecha inicio", "nombreCliente": "Huésped",
+            "totalEstadia": "Estadía cobrada", "valorLimpieza": "Limp. cobrada",
+            "pago_dueno": "Pago al dueño ($)"
+        })
+
+        st.caption("Modificá el **Pago al dueño ($)** en las filas donde aplique un valor diferente (días festivos, etc.)")
+        df_aj_editado = st.data_editor(
+            df_aj_edit,
+            key="rn_aj_editor",
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "N° Reserva":      st.column_config.NumberColumn(disabled=True),
+                "Depto":           st.column_config.TextColumn(disabled=True),
+                "Fecha inicio":    st.column_config.TextColumn(disabled=True),
+                "Huésped":         st.column_config.TextColumn(disabled=True),
+                "Estadía cobrada": st.column_config.NumberColumn(disabled=True, format="$ %.2f"),
+                "Limp. cobrada":   st.column_config.NumberColumn(disabled=True, format="$ %.2f"),
+                "Pago al dueño ($)": st.column_config.NumberColumn(
+                    min_value=0.0, step=5.0, format="$ %.2f",
+                    help="Editá si pagaste un valor diferente en esta reserva."
+                ),
+            }
+        )
+        pago_map = dict(zip(
+            df_aj_editado["N° Reserva"].astype(int),
+            df_aj_editado["Pago al dueño ($)"].astype(float)
+        ))
+
+    # ── Sección 2: Excedente de limpieza — todos los deptos ──
+    st.subheader("2️⃣ Excedente de limpieza — Todos los departamentos")
+    st.caption(
+        f"El excedente es el monto cobrado por encima de **${costo_limpieza:.0f}**. "
+        "Aplica a propios y ajenos por igual."
+    )
+
+    df_limp = df[["numero", "departamento", "tipo",
+                  df.columns[df.columns.tolist().index("fechaInicio")],
+                  "nombreCliente", "valorLimpieza"]].copy()
+    df_limp["fechaInicio"] = df_limp["fechaInicio"].dt.strftime("%Y-%m-%d")
+    df_limp["excedente"] = df_limp["valorLimpieza"].apply(
+        lambda v: max(float(v) - costo_limpieza, 0.0)
+    )
+    df_limp_show = df_limp.rename(columns={
+        "numero": "N° Reserva", "departamento": "Depto", "tipo": "Tipo",
+        "fechaInicio": "Fecha", "nombreCliente": "Huésped",
+        "valorLimpieza": "Limp. cobrada", "excedente": "Excedente ($)"
+    })
+
+    # Mostrar solo filas con excedente o todas
+    mostrar_exc = st.checkbox("Mostrar solo reservas con excedente de limpieza", value=False, key="rn_solo_exc")
+    df_limp_disp = df_limp_show[df_limp_show["Excedente ($)"] > 0] if mostrar_exc else df_limp_show
+
+    st.dataframe(
+        df_limp_disp.style.format({"Limp. cobrada": "$ {:.2f}", "Excedente ($)": "$ {:.2f}"}),
+        use_container_width=True, hide_index=True
+    )
+
+    # ── Cálculo final ──
+    df["pago_dueno_ef"] = df.apply(
+        lambda r: pago_map.get(int(r["numero"]), pago_dueno_std) if r["tipo"] == "Ajeno" else 0.0,
+        axis=1
+    )
+    df["exc_limp"] = df["valorLimpieza"].apply(lambda v: max(float(v) - costo_limpieza, 0.0))
+    df["ingreso_neto"] = df["totalEstadia"] - df["pago_dueno_ef"] + df["exc_limp"]
+
+    # ── Sección 3: Resumen y totales ──
+    st.markdown("---")
+    st.subheader("3️⃣ Resumen de rentabilidad neta")
+
+    # KPIs globales
+    total_bruto  = df["totalEstadia"].sum()
+    total_pagos  = df["pago_dueno_ef"].sum()
+    total_exc    = df["exc_limp"].sum()
+    total_neto   = df["ingreso_neto"].sum()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Ingreso bruto",  moneda(total_bruto))
+    c2.metric("Pagos a dueños", moneda(total_pagos))
+    c3.metric("Exc. limpieza",  moneda(total_exc))
+    c4.metric("Ingreso NETO",   moneda(total_neto),
+              delta=f"{(total_neto/total_bruto*100):.1f}% del bruto" if total_bruto else None)
+
+    # Resumen por departamento
+    df_res = df.groupby(["departamento", "tipo"]).agg(
+        reservas=("numero", "count"),
+        bruto=("totalEstadia", "sum"),
+        pagos_dueno=("pago_dueno_ef", "sum"),
+        exc_limp=("exc_limp", "sum"),
+        neto=("ingreso_neto", "sum"),
+        noches=("numeroNoches", "sum"),
+    ).reset_index()
+    df_res["neto_x_noche"] = (df_res["neto"] / df_res["noches"].replace(0, 1)).round(2)
+    df_res = df_res.sort_values("neto", ascending=False)
+
+    # Gráficos
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("**Ingreso neto por departamento ($)**")
+        st.bar_chart(df_res.set_index("departamento")["neto"])
+    with c2:
+        st.markdown("**Neto por noche ($)**")
+        st.bar_chart(df_res.set_index("departamento")["neto_x_noche"])
+
+    st.markdown("**Bruto vs Neto por departamento**")
+    st.bar_chart(df_res.set_index("departamento")[["bruto", "neto"]])
+
+    # Tabla resumen
+    df_res_show = df_res.copy()
+    for col in ["bruto", "pagos_dueno", "exc_limp", "neto", "neto_x_noche"]:
+        df_res_show[col] = df_res_show[col].map(moneda)
+    df_res_show.columns = ["Depto", "Tipo", "Reservas", "Bruto",
+                            "Pagos dueños", "Exc. limp.", "Neto", "Noches", "Neto/noche"]
+    st.dataframe(df_res_show, use_container_width=True, hide_index=True)
+
+    # Exportar Excel
+    buf = BytesIO()
+    df_res_show.to_excel(buf, index=False, engine="openpyxl")
+    st.download_button(
+        "⬇️ Exportar resumen Excel",
+        data=buf.getvalue(),
+        file_name=f"rentabilidad_neta_{f_ini}_{f_fin}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
