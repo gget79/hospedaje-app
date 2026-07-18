@@ -29,7 +29,9 @@ def _cargar_reservas(db: Database) -> pd.DataFrame:
     SELECT r.numero, r.fecha, r.fechaInicio, r.fechaFin,
            r.numeroNoches, r.valorNoche, r.totalEstadia,
            r.valorLimpieza, r.comision, r.numeroPersonas,
-           r.estado, d.numero AS departamento
+           r.estado, d.numero AS departamento,
+           d.codigo AS codigoDepartamento,
+           COALESCE(d.esPropio, 1) AS esPropio
     FROM reservas r
     JOIN departamentos d ON d.codigo = r.codigoDepartamento
     WHERE UPPER(r.estado) NOT IN ('CANCELADA','ANULADA')
@@ -41,7 +43,7 @@ def _cargar_reservas(db: Database) -> pd.DataFrame:
     for col in ["fecha", "fechaInicio", "fechaFin"]:
         df[col] = pd.to_datetime(df[col], errors="coerce")
     for col in ["numeroNoches", "valorNoche", "totalEstadia",
-                "valorLimpieza", "comision", "numeroPersonas"]:
+                "valorLimpieza", "comision", "numeroPersonas", "esPropio"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     df["anio"] = df["fechaInicio"].dt.year
     df["mes"] = df["fechaInicio"].dt.month
@@ -97,6 +99,17 @@ def ui_analisis_predictivo_ingresos(db: Database):
 
     anios_disponibles = sorted(df["anio"].unique().tolist())
 
+    # ── Selector de departamentos (aplica a tabs 1, 2 y 3) ──
+    todos_deptos = sorted(df["departamento"].unique().tolist(),
+                          key=lambda x: (len(str(x)), str(x)))
+    dep_sel = st.multiselect(
+        "🏠 Filtrar por departamento (aplica a Tendencia general, Comparación mensual y Año vs Año)",
+        options=todos_deptos,
+        default=todos_deptos,
+        key="pred_dep_sel"
+    )
+    df_f = df[df["departamento"].isin(dep_sel)] if dep_sel else df
+
     # ── Tabs principales ──────────────────────────────────────────────
     tabs = st.tabs([
         "📈 Tendencia general",
@@ -106,6 +119,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
         "👥 Perfil de huéspedes",
         "🔮 Proyección demanda",
         "💡 Recomendaciones",
+        "💵 Rentabilidad neta",
     ])
 
     # ══════════════════════════════════════════════════════════════════
@@ -115,7 +129,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
         st.subheader("Reservas y facturación por mes (histórico completo)")
 
         df_mes = (
-            df.groupby(["anio", "mes"])
+            df_f.groupby(["anio", "mes"])
             .agg(reservas=("numero", "count"),
                  noches=("numeroNoches", "sum"),
                  ingresos=("ingreso_total", "sum"),
@@ -157,7 +171,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
             key="pred_mes_comp"
         )
 
-        df_comp = df[df["mes"] == mes_sel].groupby("anio").agg(
+        df_comp = df_f[df_f["mes"] == mes_sel].groupby("anio").agg(
             reservas=("numero", "count"),
             noches=("numeroNoches", "sum"),
             ingresos=("ingreso_total", "sum"),
@@ -207,7 +221,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
                                     index=len(anios_disponibles) - 1, key="pred_anio_b")
 
             def resumen_anio(a):
-                d = df[df["anio"] == a].groupby("mes").agg(
+                d = df_f[df_f["anio"] == a].groupby("mes").agg(
                     reservas=("numero", "count"),
                     ingresos=("ingreso_total", "sum"),
                     noches=("numeroNoches", "sum"),
@@ -533,6 +547,121 @@ def ui_analisis_predictivo_ingresos(db: Database):
         c3.metric("Personas/reserva", f"{avg_personas_rec:.1f}")
         c4.metric("Mes pico", MESES_ES[mes_pico])
 
+    # ══════════════════════════════════════════════════════════════════
+    # TAB 8 — RENTABILIDAD NETA
+    # ══════════════════════════════════════════════════════════════════
+    with tabs[7]:
+        st.subheader("💵 Rentabilidad neta por departamento")
+        st.caption(
+            "Calcula el ingreso real que te queda por reserva: "
+            "estadía cobrada menos pago al dueño (ajenos) más excedente de limpieza."
+        )
+
+        with st.container(border=True):
+            st.markdown("**⚙️ Parámetros de cálculo**")
+            c1, c2 = st.columns(2)
+            with c1:
+                pago_dueno_std = st.number_input(
+                    "Pago estándar al dueño por reserva ($)",
+                    min_value=0.0, value=50.0, step=5.0, key="rent_pago_dueno",
+                    help="Lo que pagás al dueño en deptos ajenos. Podés ajustar por reserva abajo."
+                )
+            with c2:
+                costo_limpieza = st.number_input(
+                    "Costo fijo de limpieza ($)",
+                    min_value=0.0, value=20.0, step=1.0, key="rent_costo_limp",
+                    help="Lo que pagás a quien limpia. Si cobrás más, el excedente es ingreso tuyo."
+                )
+
+        st.info(
+            f"📌 Deptos **ajenos**: ingreso = estadía − ${pago_dueno_std:.0f} (dueño) + excedente limpieza  \n"
+            f"📌 Deptos **propios**: ingreso = estadía + excedente limpieza  \n"
+            f"📌 **Excedente limpieza** = max(limpieza cobrada − ${costo_limpieza:.0f}, 0) — aplica a todos"
+        )
+
+        # ── Tabla editable de pagos al dueño por reserva (solo ajenos) ──
+        df_ajenos_ed = df[df["esPropio"] == 0].copy()
+
+        if not df_ajenos_ed.empty:
+            df_ajenos_ed["pago_dueno"] = pago_dueno_std
+            df_ed_show = df_ajenos_ed[["numero", "departamento", "fechaInicio",
+                                        "totalEstadia", "valorLimpieza", "pago_dueno"]].copy()
+            df_ed_show["fechaInicio"] = df_ed_show["fechaInicio"].dt.strftime("%Y-%m-%d")
+            df_ed_show = df_ed_show.rename(columns={
+                "numero": "N°", "departamento": "Depto", "fechaInicio": "Fecha",
+                "totalEstadia": "Estadía cobrada", "valorLimpieza": "Limp. cobrada",
+                "pago_dueno": "Pago al dueño ($)"
+            })
+
+            with st.expander(f"✏️ Ajustar pago al dueño por reserva ({len(df_ed_show)} reservas ajenas — días festivos, etc.)", expanded=False):
+                df_editado = st.data_editor(
+                    df_ed_show, key="rent_ed", use_container_width=True, hide_index=True,
+                    column_config={
+                        "N°":              st.column_config.NumberColumn(disabled=True),
+                        "Depto":           st.column_config.TextColumn(disabled=True),
+                        "Fecha":           st.column_config.TextColumn(disabled=True),
+                        "Estadía cobrada": st.column_config.NumberColumn(disabled=True, format="$ %.2f"),
+                        "Limp. cobrada":   st.column_config.NumberColumn(disabled=True, format="$ %.2f"),
+                        "Pago al dueño ($)": st.column_config.NumberColumn(min_value=0.0, step=5.0, format="$ %.2f"),
+                    }
+                )
+            pago_map = dict(zip(df_editado["N°"].astype(int), df_editado["Pago al dueño ($)"].astype(float)))
+        else:
+            pago_map = {}
+
+        # ── Cálculo ──
+        df_calc = df.copy()
+        df_calc["pago_dueno_ef"]     = df_calc.apply(lambda r: pago_map.get(int(r["numero"]), pago_dueno_std) if r["esPropio"] == 0 else 0.0, axis=1)
+        df_calc["exc_limp"]          = df_calc["valorLimpieza"].apply(lambda v: max(float(v) - costo_limpieza, 0.0))
+        df_calc["ingreso_neto"]      = df_calc["totalEstadia"] - df_calc["pago_dueno_ef"] + df_calc["exc_limp"]
+        df_calc["tipo_depto"]        = df_calc["esPropio"].map(lambda x: "Propio" if int(x) == 1 else "Ajeno")
+
+        df_rent = df_calc.groupby(["departamento", "tipo_depto"]).agg(
+            reservas=("numero", "count"),
+            ingreso_bruto=("totalEstadia", "sum"),
+            pago_duenos=("pago_dueno_ef", "sum"),
+            excedente_limp=("exc_limp", "sum"),
+            ingreso_neto=("ingreso_neto", "sum"),
+            noches=("numeroNoches", "sum"),
+        ).reset_index().sort_values("ingreso_neto", ascending=False)
+        df_rent["neto_x_noche"] = (df_rent["ingreso_neto"] / df_rent["noches"].replace(0, 1)).round(2)
+
+        # ── KPIs ──
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Ingreso bruto",  moneda(df_rent["ingreso_bruto"].sum()))
+        c2.metric("Pagos a dueños", moneda(df_rent["pago_duenos"].sum()))
+        c3.metric("Exc. limpieza",  moneda(df_rent["excedente_limp"].sum()))
+        c4.metric("Ingreso NETO",   moneda(df_rent["ingreso_neto"].sum()))
+
+        st.markdown("---")
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("**Ingreso neto por departamento ($)**")
+            st.bar_chart(df_rent.set_index("departamento")["ingreso_neto"])
+        with c2:
+            st.markdown("**Neto por noche ($)**")
+            st.bar_chart(df_rent.set_index("departamento")["neto_x_noche"])
+
+        st.markdown("**Bruto vs Neto por departamento**")
+        st.bar_chart(df_rent.set_index("departamento")[["ingreso_bruto", "ingreso_neto"]])
+
+        df_show_r = df_rent.copy()
+        for col in ["ingreso_bruto", "pago_duenos", "excedente_limp", "ingreso_neto", "neto_x_noche"]:
+            df_show_r[col] = df_show_r[col].map(moneda)
+        df_show_r.columns = ["Depto", "Tipo", "Reservas", "Bruto", "Pagos dueños",
+                              "Exc. limp.", "Neto", "Noches", "Neto/noche"]
+        st.dataframe(df_show_r, use_container_width=True, hide_index=True)
+
+        with st.expander("📋 Detalle por reserva"):
+            df_det = df_calc[["numero","departamento","tipo_depto","fechaInicio",
+                               "totalEstadia","valorLimpieza","pago_dueno_ef","exc_limp","ingreso_neto"]].copy()
+            df_det["fechaInicio"] = df_det["fechaInicio"].dt.strftime("%Y-%m-%d")
+            for col in ["totalEstadia","valorLimpieza","pago_dueno_ef","exc_limp","ingreso_neto"]:
+                df_det[col] = df_det[col].map(moneda)
+            df_det.columns = ["N°","Depto","Tipo","Fecha","Estadía","Limp.cobrada","Pago dueño","Exc.limp","Neto"]
+            st.dataframe(df_det, use_container_width=True, hide_index=True)
+
 
 # =================================================================
 #  ANÁLISIS PREDICTIVO — GASTOS
@@ -609,7 +738,7 @@ def ui_analisis_predictivo_gastos(db):
             format_func=lambda m: MESES_ES[m],
             index=pd.Timestamp.today().month - 1, key="gas_mes_comp"
         )
-        df_comp = df[df["mes"] == mes_sel].groupby("anio").agg(
+        df_comp = df_f[df_f["mes"] == mes_sel].groupby("anio").agg(
             total=("valor", "sum"), cantidad=("numero", "count"),
             promedio=("valor", "mean")).reset_index()
         if df_comp.empty:
