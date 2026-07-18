@@ -96,7 +96,13 @@ CREATE TABLE IF NOT EXISTS bloqueosDepto (
 
 CREATE INDEX IF NOT EXISTS ix_bloqueos_depto_fechas ON bloqueosDepto (codigoDepartamento, fechaInicio, fechaFin);
 
-CREATE INDEX IF NOT EXISTS ix_ajustes_fecha ON ajustesContables (fecha);
+CREATE TABLE IF NOT EXISTS pagos_dueno_reserva (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    numeroReserva INTEGER NOT NULL UNIQUE,
+    pagoPorNoche REAL NOT NULL,
+    FOREIGN KEY (numeroReserva) REFERENCES reservas(numero)
+);
+
 
 CREATE INDEX IF NOT EXISTS ix_reservas_depto_ini_fin   ON reservas (codigoDepartamento, fechaInicio, fechaFin);
 CREATE INDEX IF NOT EXISTS ix_reservas_fechaInicio     ON reservas (fechaInicio);

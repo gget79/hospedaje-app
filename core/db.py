@@ -135,6 +135,15 @@ class Database:
             );
         """)
 
+        # Pagos al dueño por reserva (persistencia para reporte rentabilidad)
+        self.db_run_safe("""
+            CREATE TABLE IF NOT EXISTS pagos_dueno_reserva (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                numeroReserva INTEGER NOT NULL UNIQUE,
+                pagoPorNoche REAL NOT NULL
+            );
+        """)
+
         # Preferencias de usuario (filtros persistentes)
         self.db_run_safe("""
             CREATE TABLE IF NOT EXISTS preferenciasUsuario (
