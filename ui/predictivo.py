@@ -254,6 +254,9 @@ def ui_analisis_predictivo_ingresos(db: Database):
             st.markdown("**Noches vendidas por mes**")
             st.line_chart(comp[[f"noc_{anio_a}", f"noc_{anio_b}"]])
 
+            st.markdown("**Ingresos por mes — línea de tendencia ($)**")
+            st.line_chart(comp[[f"ing_{anio_a}", f"ing_{anio_b}"]])
+
             # Variación %
             comp["var_reservas_%"] = np.where(
                 comp[f"res_{anio_a}"] > 0,
