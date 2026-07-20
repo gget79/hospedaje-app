@@ -640,27 +640,73 @@ def ui_rep_rentabilidad_neta(db: Database):
     c2.metric("Reservas con excedente",   int((df["exc_limp"] > 0).sum()))
 
     # ══════════════════════════════════════════════════════
+    # SECCIÓN 3: COMISIÓN DEPTOS PROPIOS — 10% del total estadía
+    # ══════════════════════════════════════════════════════
+    st.markdown("---")
+    st.subheader("3️⃣ Comisión — Departamentos propios")
+    st.caption(
+        "Comisión = **10% del total de estadía cobrada** en deptos propios. "
+        "Es el ingreso que te corresponde como administrador/gestor de tus propios deptos."
+    )
+
+    df_propios = df[df["tipo"] == "Propio"].copy()
+
+    if df_propios.empty:
+        st.info("No hay reservas de departamentos propios en el período seleccionado.")
+        total_comision_propios = 0.0
+    else:
+        pct_comision = st.number_input(
+            "Porcentaje de comisión (%)",
+            min_value=0.0, max_value=100.0, value=10.0, step=1.0, key="rn_pct_com",
+            help="Por defecto 10%. Modificá si aplica un porcentaje diferente."
+        )
+
+        df_propios["comision_calc"] = (df_propios["totalEstadia"] * pct_comision / 100).round(2)
+
+        df_prop_show = df_propios[[
+            "numero", "departamento", "fecha_str", "nombreCliente",
+            "numeroNoches", "totalEstadia", "comision_calc"
+        ]].rename(columns={
+            "numero": "N°", "departamento": "Depto", "fecha_str": "Fecha",
+            "nombreCliente": "Huésped", "numeroNoches": "Noches",
+            "totalEstadia": "Estadía cobrada", "comision_calc": f"Comisión {pct_comision:.0f}% ($)"
+        })
+
+        st.dataframe(
+            df_prop_show.style.format({
+                "Estadía cobrada": "$ {:.2f}",
+                f"Comisión {pct_comision:.0f}% ($)": "$ {:.2f}"
+            }),
+            use_container_width=True, hide_index=True
+        )
+
+        total_comision_propios = float(df_propios["comision_calc"].sum())
+        c1, c2 = st.columns(2)
+        c1.metric("Estadía cobrada (propios)", moneda(df_propios["totalEstadia"].sum()))
+        c2.metric(f"Comisión {pct_comision:.0f}%", moneda(total_comision_propios))
+
+    # ══════════════════════════════════════════════════════
     # TOTALES FINALES
     # ══════════════════════════════════════════════════════
     st.markdown("---")
     st.subheader("📊 Total ingreso neto del período")
-    st.caption(
-        "**Gran total = Neto deptos ajenos + Excedente limpieza** — "
-        "es lo que realmente te quedó de ingreso en el período."
-    )
+    st.caption("Suma de todos los rubros de ingreso neto del período filtrado.")
 
-    gran_total = total_neto_ajenos + total_excedente
+    gran_total = total_neto_ajenos + total_excedente + total_comision_propios
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     c1.metric("Neto deptos ajenos",    moneda(total_neto_ajenos),
-              help="Estadía cobrada − pagos al dueño, sumado de todos los deptos ajenos")
+              help="Estadía cobrada − pagos al dueño (ajenos)")
     c2.metric("Excedente limpieza",    moneda(total_excedente),
-              help="Lo que cobraste por encima de $20 de limpieza, en todos los deptos")
-    c3.metric("✅ TOTAL INGRESO NETO", moneda(gran_total))
+              help="Cobrado por limpieza por encima de $20 fijo (todos los deptos)")
+    c3.metric("Comisión propios",      moneda(total_comision_propios),
+              help="10% del total de estadía en deptos propios")
+    c4.metric("✅ TOTAL INGRESO NETO", moneda(gran_total))
 
     st.success(
         f"**{moneda(total_neto_ajenos)}** (neto ajenos)  +  "
-        f"**{moneda(total_excedente)}** (exc. limpieza)  =  "
+        f"**{moneda(total_excedente)}** (exc. limpieza)  +  "
+        f"**{moneda(total_comision_propios)}** (comisión propios)  =  "
         f"**{moneda(gran_total)}** ingreso neto total"
     )
 
