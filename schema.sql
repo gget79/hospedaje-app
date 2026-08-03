@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS departamentos (
     torre TEXT,
     piso TEXT,
     codPropietario INTEGER,
-    -- esPropio ya no va aquí
+    esPropio INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (codPropietario) REFERENCES propietarios(codigo)
 );
 
@@ -38,8 +38,9 @@ CREATE TABLE IF NOT EXISTS gastos (
     detalle TEXT,
     valor REAL NOT NULL DEFAULT 0,
     codConcepto INTEGER NOT NULL,
-    -- codigoDepartamento se agrega por migración
-    FOREIGN KEY (codConcepto) REFERENCES conceptoGastos(codigo)
+    codigoDepartamento INTEGER,
+    FOREIGN KEY (codConcepto) REFERENCES conceptoGastos(codigo),
+    FOREIGN KEY (codigoDepartamento) REFERENCES departamentos(codigo)
 );
 
 CREATE TABLE IF NOT EXISTS reservas (
@@ -58,6 +59,8 @@ CREATE TABLE IF NOT EXISTS reservas (
     valorLimpieza REAL NOT NULL DEFAULT 0,
     comision REAL NOT NULL DEFAULT 0,
     estado TEXT NOT NULL DEFAULT 'Pendiente',
+    numeroPersonas INTEGER NOT NULL DEFAULT 1,
+    autorizacionSolicitada INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (codigoDepartamento) REFERENCES departamentos(codigo)
 );
 
@@ -94,8 +97,6 @@ CREATE TABLE IF NOT EXISTS bloqueosDepto (
     FOREIGN KEY (codigoDepartamento) REFERENCES departamentos(codigo)
 );
 
-CREATE INDEX IF NOT EXISTS ix_bloqueos_depto_fechas ON bloqueosDepto (codigoDepartamento, fechaInicio, fechaFin);
-
 CREATE TABLE IF NOT EXISTS pagos_dueno_reserva (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     numeroReserva INTEGER NOT NULL UNIQUE,
@@ -103,9 +104,21 @@ CREATE TABLE IF NOT EXISTS pagos_dueno_reserva (
     FOREIGN KEY (numeroReserva) REFERENCES reservas(numero)
 );
 
+CREATE TABLE IF NOT EXISTS preferenciasUsuario (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    usuario TEXT NOT NULL,
+    clave TEXT NOT NULL,
+    valor TEXT NOT NULL,
+    UNIQUE(usuario, clave)
+);
 
-CREATE INDEX IF NOT EXISTS ix_reservas_depto_ini_fin   ON reservas (codigoDepartamento, fechaInicio, fechaFin);
-CREATE INDEX IF NOT EXISTS ix_reservas_fechaInicio     ON reservas (fechaInicio);
-CREATE INDEX IF NOT EXISTS ix_reservas_fechaFin        ON reservas (fechaFin);
-CREATE INDEX IF NOT EXISTS ix_reservas_depto_fecha     ON reservas (codigoDepartamento, fecha);
-CREATE INDEX IF NOT EXISTS ix_reservas_fecha           ON reservas (fecha);
+-- Índices
+CREATE INDEX IF NOT EXISTS ix_bloqueos_depto_fechas      ON bloqueosDepto (codigoDepartamento, fechaInicio, fechaFin);
+CREATE INDEX IF NOT EXISTS ix_reservas_depto_ini_fin      ON reservas (codigoDepartamento, fechaInicio, fechaFin);
+CREATE INDEX IF NOT EXISTS ix_reservas_fechaInicio        ON reservas (fechaInicio);
+CREATE INDEX IF NOT EXISTS ix_reservas_fechaFin           ON reservas (fechaFin);
+CREATE INDEX IF NOT EXISTS ix_reservas_depto_fecha        ON reservas (codigoDepartamento, fecha);
+CREATE INDEX IF NOT EXISTS ix_reservas_fecha              ON reservas (fecha);
+CREATE INDEX IF NOT EXISTS ix_gastos_fecha                ON gastos (fecha);
+CREATE INDEX IF NOT EXISTS ix_gastos_concepto             ON gastos (codConcepto);
+CREATE INDEX IF NOT EXISTS ix_ajustes_fecha               ON ajustesContables (fecha);
