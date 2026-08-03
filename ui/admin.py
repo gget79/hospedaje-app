@@ -573,44 +573,51 @@ def ui_admin_bloqueos_depto(db: Database):
         with c2:
             S["f_ini"] = st.date_input("Fecha inicio bloqueo", value=S["f_ini"], key="bl_fi")
         with c3:
-            S["f_fin"] = st.date_input("Fecha fin bloqueo", value=S["f_fin"], key="bl_ff",
-                                        help="El último día bloqueado es el anterior a esta fecha (igual que reservas).")
+            S["f_fin"] = st.date_input(
+                "Fecha fin bloqueo (inclusive)",
+                value=S["f_fin"],
+                key="bl_ff",
+                help="El último día que quedará bloqueado. El bloqueo incluye este día completo.",
+            )
 
         S["motivo"] = st.text_input(
             "Motivo", value=S["motivo"], key="bl_motivo",
             placeholder="Uso dueño, Mantenimiento, Refacción..."
         )
 
-        if S["f_ini"] < S["f_fin"]:
-            dias = (S["f_fin"] - S["f_ini"]).days
-            st.info(f"🔒 Se bloquearán **{dias} día(s)** del depto **{dep_label}** — del {S['f_ini']} al {S['f_fin'] - timedelta(days=1)}")
+        if S["f_ini"] <= S["f_fin"]:
+            dias = (S["f_fin"] - S["f_ini"]).days + 1
+            st.info(f"🔒 Se bloquearán **{dias} día(s)** del depto **{dep_label}** — del {S['f_ini']} al {S['f_fin']} (ambos inclusive)")
         else:
-            st.warning("La fecha fin debe ser posterior a la fecha inicio.")
+            st.warning("La fecha fin debe ser igual o posterior a la fecha inicio.")
 
         b1, b2 = st.columns(2)
         guardar = b1.button("💾 Guardar bloqueo", key="bl_guardar", use_container_width=True)
         limpiar = b2.button("🧹 Limpiar", key="bl_limpiar", use_container_width=True)
 
     if guardar:
-        if S["f_fin"] <= S["f_ini"]:
-            st.error("La fecha fin debe ser posterior a la fecha inicio.")
+        if S["f_fin"] < S["f_ini"]:
+            st.error("La fecha fin debe ser igual o posterior a la fecha inicio.")
         elif not S["motivo"].strip():
             st.warning("El motivo es obligatorio.")
         else:
             cod_dep = dep_map[dep_label]
+            # Guardamos fechaFin como f_fin + 1 día (convención half-open, igual que reservas)
+            # para que el día f_fin quede incluido en el bloqueo
+            fecha_fin_db = str(S["f_fin"] + timedelta(days=1))
             if S["edit_id"]:
                 db.run(
                     "UPDATE bloqueosDepto SET codigoDepartamento=?, fechaInicio=?, fechaFin=?, motivo=? WHERE id=?;",
-                    (cod_dep, str(S["f_ini"]), str(S["f_fin"]), S["motivo"].strip(), int(S["edit_id"]))
+                    (cod_dep, str(S["f_ini"]), fecha_fin_db, S["motivo"].strip(), int(S["edit_id"]))
                 )
                 st.session_state["_bloqueo_toast"] = f"✅ Bloqueo #{S['edit_id']} actualizado."
             else:
                 db.run(
                     "INSERT INTO bloqueosDepto (codigoDepartamento, fechaInicio, fechaFin, motivo) VALUES (?,?,?,?);",
-                    (cod_dep, str(S["f_ini"]), str(S["f_fin"]), S["motivo"].strip())
+                    (cod_dep, str(S["f_ini"]), fecha_fin_db, S["motivo"].strip())
                 )
-                dias = (S["f_fin"] - S["f_ini"]).days
-                st.session_state["_bloqueo_toast"] = f"✅ Bloqueo registrado: {dep_label} por {dias} día(s)."
+                dias = (S["f_fin"] - S["f_ini"]).days + 1
+                st.session_state["_bloqueo_toast"] = f"✅ Bloqueo registrado: {dep_label} por {dias} día(s) (del {S['f_ini']} al {S['f_fin']})."
 
             S["edit_id"] = None
             S["dep_label"] = list(dep_map.keys())[0]
@@ -629,8 +636,10 @@ def ui_admin_bloqueos_depto(db: Database):
 
     # Listado
     st.subheader("Bloqueos activos")
+    # Mostramos fechaFin - 1 día en pantalla (fecha inclusiva real) para que sea consistente con la UI
     df_bl = db.fetch_df("""
-        SELECT b.id, d.numero AS departamento, b.fechaInicio, b.fechaFin,
+        SELECT b.id, d.numero AS departamento, b.fechaInicio,
+               date(b.fechaFin, '-1 day') AS fechaFinDisplay,
                b.motivo,
                (julianday(b.fechaFin) - julianday(b.fechaInicio)) AS dias
         FROM bloqueosDepto b
@@ -649,19 +658,19 @@ def ui_admin_bloqueos_depto(db: Database):
         accion_col = st.column_config.TextColumn("Acción")
 
     edited = st.data_editor(
-        df_bl[["id", "departamento", "fechaInicio", "fechaFin", "dias", "motivo", "Acción"]],
+        df_bl[["id", "departamento", "fechaInicio", "fechaFinDisplay", "dias", "motivo", "Acción"]],
         key="bl_grid",
         use_container_width=True,
         hide_index=True,
         num_rows="fixed",
         column_config={
-            "id":           st.column_config.NumberColumn("N°", disabled=True),
-            "departamento": st.column_config.TextColumn("Depto", disabled=True),
-            "fechaInicio":  st.column_config.TextColumn("Inicio", disabled=True),
-            "fechaFin":     st.column_config.TextColumn("Fin", disabled=True),
-            "dias":         st.column_config.NumberColumn("Días", disabled=True),
-            "motivo":       st.column_config.TextColumn("Motivo", disabled=True),
-            "Acción":       accion_col,
+            "id":               st.column_config.NumberColumn("N°", disabled=True),
+            "departamento":     st.column_config.TextColumn("Depto", disabled=True),
+            "fechaInicio":      st.column_config.TextColumn("Inicio", disabled=True),
+            "fechaFinDisplay":  st.column_config.TextColumn("Fin (inclusive)", disabled=True),
+            "dias":             st.column_config.NumberColumn("Días", disabled=True),
+            "motivo":           st.column_config.TextColumn("Motivo", disabled=True),
+            "Acción":           accion_col,
         }
     )
 
@@ -687,12 +696,21 @@ def ui_admin_bloqueos_depto(db: Database):
                 eds = act[act["Acción"] == "✏️ Editar"]
                 if not eds.empty:
                     row_id = int(eds.iloc[-1]["id"])
-                    orig = df_bl[df_bl["id"] == row_id].iloc[0]
-                    dep_num = str(orig["departamento"])
-                    dep_lbl = f"Depto {dep_num}"
-                    S["edit_id"] = row_id
-                    S["dep_label"] = dep_lbl if dep_lbl in dep_map else list(dep_map.keys())[0]
-                    S["f_ini"] = pd.to_datetime(orig["fechaInicio"]).date()
-                    S["f_fin"] = pd.to_datetime(orig["fechaFin"]).date()
-                    S["motivo"] = str(orig["motivo"] or "Uso dueño")
-                    st.rerun()
+                    # Re-leer desde BD la fechaFin real (half-open) para calcular la fecha display
+                    orig_db = db.fetch_df(
+                        "SELECT codigoDepartamento, fechaInicio, fechaFin, motivo FROM bloqueosDepto WHERE id=?;",
+                        (row_id,)
+                    )
+                    if orig_db.empty:
+                        st.warning("No se encontró el bloqueo para editar.")
+                    else:
+                        orig = orig_db.iloc[0]
+                        dep_cod = int(orig["codigoDepartamento"])
+                        dep_lbl = next((k for k, v in dep_map.items() if v == dep_cod), list(dep_map.keys())[0])
+                        S["edit_id"] = row_id
+                        S["dep_label"] = dep_lbl
+                        S["f_ini"] = pd.to_datetime(orig["fechaInicio"]).date()
+                        # Fecha fin display = fechaFin - 1 día (inclusive)
+                        S["f_fin"] = (pd.to_datetime(orig["fechaFin"]) - timedelta(days=1)).date()
+                        S["motivo"] = str(orig["motivo"] or "Uso dueño")
+                        st.rerun()

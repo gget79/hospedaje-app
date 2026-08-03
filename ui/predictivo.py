@@ -2,7 +2,7 @@
 """
 Módulo: Análisis Predictivo de Reservas
 Gráficos, tendencias, comparaciones y predicciones de demanda.
-Usa solo librerías ya disponibles: pandas, streamlit, numpy.
+Usa solo librerías ya disponibles: pandas, streamlit, numpy, plotly.
 """
 from __future__ import annotations
 
@@ -10,9 +10,133 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 import streamlit as st
+import plotly.graph_objects as go
 
 from core.db import Database
 from core.utils import moneda
+
+# ─────────────────────────────────────────────
+#  Config global para deshabilitar zoom con scroll en todos los gráficos
+# ─────────────────────────────────────────────
+_PLOTLY_CFG = {"scrollZoom": False, "displayModeBar": False}
+
+
+_LAYOUT = dict(
+    margin=dict(l=10, r=10, t=30, b=10),
+    height=350,
+    dragmode=False,
+    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+)
+
+# Color para barras/puntos con valor 0 (resaltado)
+_COLOR_ZERO = "rgba(220,53,69,0.55)"   # rojo semitransparente
+
+
+def _colors_for(values, base_color: str) -> list:
+    """Devuelve lista de colores: rojo para 0, base_color para el resto."""
+    return [_COLOR_ZERO if v == 0 else base_color for v in values]
+
+
+def _bar(series: pd.Series, title: str = "", color: str = "#1f77b4") -> go.Figure:
+    """Gráfico de barras Plotly — barras en 0 resaltadas en rojo."""
+    vals = list(series.values)
+    fig = go.Figure(go.Bar(
+        x=list(series.index.astype(str)),
+        y=vals,
+        marker_color=_colors_for(vals, color),
+    ))
+    fig.update_layout(title=title, **_LAYOUT)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    return fig
+
+
+def _bar2(x, y1, y2, name1: str, name2: str, title: str = "",
+          color1: str = "#1f77b4", color2: str = "#ff7f0e") -> go.Figure:
+    """Gráfico de barras agrupadas (dos series) — barras en 0 resaltadas en rojo."""
+    y1, y2 = list(y1), list(y2)
+    fig = go.Figure([
+        go.Bar(name=name1, x=[str(v) for v in x], y=y1,
+               marker_color=_colors_for(y1, color1)),
+        go.Bar(name=name2, x=[str(v) for v in x], y=y2,
+               marker_color=_colors_for(y2, color2)),
+    ])
+    fig.update_layout(barmode="group", title=title, **_LAYOUT)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    return fig
+
+
+def _line2(x, y1, y2, name1: str, name2: str, title: str = "",
+           color1: str = "#1f77b4", color2: str = "#ff7f0e") -> go.Figure:
+    """Gráfico de líneas (dos series)."""
+    fig = go.Figure([
+        go.Scatter(name=name1, x=[str(v) for v in x], y=list(y1),
+                   mode="lines+markers", line_color=color1),
+        go.Scatter(name=name2, x=[str(v) for v in x], y=list(y2),
+                   mode="lines+markers", line_color=color2),
+    ])
+    fig.update_layout(title=title, **_LAYOUT)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    return fig
+
+
+def _line1(series: pd.Series, title: str = "", color: str = "#1f77b4") -> go.Figure:
+    """Gráfico de línea simple."""
+    fig = go.Figure(go.Scatter(
+        x=list(series.index.astype(str)),
+        y=list(series.values),
+        mode="lines+markers",
+        line_color=color,
+    ))
+    fig.update_layout(title=title, **_LAYOUT)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    return fig
+
+
+def _area1(series: pd.Series, title: str = "", color: str = "#1f77b4") -> go.Figure:
+    """Gráfico de área simple."""
+    fig = go.Figure(go.Scatter(
+        x=list(series.index.astype(str)),
+        y=list(series.values),
+        mode="lines",
+        fill="tozeroy",
+        line_color=color,
+        fillcolor="rgba(31,119,180,0.3)",
+    ))
+    fig.update_layout(title=title, **_LAYOUT)
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True)
+    return fig
+
+
+# ─────────────────────────────────────────────
+#  Helper: completa los 12 meses de un año con 0
+# ─────────────────────────────────────────────
+TODOS_MESES = list(range(1, 13))   # 1..12
+
+
+def _completar_12_meses(df_agr: pd.DataFrame, col_anio: str, col_mes: str,
+                         cols_valor: list, anio: int) -> pd.DataFrame:
+    """
+    Dado un DataFrame con columnas [col_anio, col_mes, ...cols_valor],
+    devuelve un DataFrame con los 12 meses del año 'anio',
+    rellenando con 0 los meses sin datos.
+    """
+    base = pd.DataFrame({col_mes: TODOS_MESES})
+    filt = df_agr[df_agr[col_anio] == anio][[col_mes] + cols_valor]
+    merged = base.merge(filt, on=col_mes, how="left").fillna(0)
+    merged[col_anio] = anio
+    for c in cols_valor:
+        merged[c] = pd.to_numeric(merged[c], errors="coerce").fillna(0)
+    return merged
+
+
+def _pc(fig: go.Figure):
+    """Atajo para st.plotly_chart con config global."""
+    st.plotly_chart(fig, use_container_width=True, config=_PLOTLY_CFG)
 
 # ─────────────────────────────────────────────
 #  Helpers internos
@@ -135,6 +259,16 @@ def ui_analisis_predictivo_ingresos(db: Database):
                  personas=("numeroPersonas", "sum"))
             .reset_index()
         )
+
+        # Completar todos los meses de cada año presente
+        if not df_mes.empty:
+            anios_pres = sorted(df_mes["anio"].unique())
+            base_full = pd.DataFrame(
+                [(a, m) for a in anios_pres for m in TODOS_MESES],
+                columns=["anio", "mes"]
+            )
+            df_mes = base_full.merge(df_mes, on=["anio", "mes"], how="left").fillna(0)
+
         df_mes["periodo"] = df_mes.apply(
             lambda r: f"{MESES_ES[int(r['mes'])]}-{int(r['anio'])}", axis=1
         )
@@ -143,13 +277,13 @@ def ui_analisis_predictivo_ingresos(db: Database):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Reservas por mes**")
-            st.bar_chart(_graf(df_mes, "reservas"))
+            _pc(_bar(df_mes.set_index("periodo")["reservas"]))
         with c2:
             st.markdown("**Ingresos por mes ($)**")
-            st.bar_chart(_graf(df_mes, "ingresos"))
+            _pc(_bar(df_mes.set_index("periodo")["ingresos"], color="#ff7f0e"))
 
         st.markdown("**Noches vendidas por mes**")
-        st.area_chart(_graf(df_mes, "noches"))
+        _pc(_area1(df_mes.set_index("periodo")["noches"], color="#2ca02c"))
 
         with st.expander("Ver tabla detallada"):
             df_show = df_mes[["periodo", "reservas", "noches", "ingresos", "personas"]].copy()
@@ -191,10 +325,10 @@ def ui_analisis_predictivo_ingresos(db: Database):
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f"**Reservas en {MESES_ES[mes_sel]} por año**")
-                st.bar_chart(df_comp.set_index("anio")["reservas"])
+                _pc(_bar(df_comp.set_index("anio")["reservas"]))
             with c2:
                 st.markdown(f"**Ingresos en {MESES_ES[mes_sel]} por año ($)**")
-                st.bar_chart(df_comp.set_index("anio")["ingresos"])
+                _pc(_bar(df_comp.set_index("anio")["ingresos"], color="#ff7f0e"))
 
             st.markdown("**Tabla comparativa**")
             df_comp2 = df_comp.copy()
@@ -219,43 +353,54 @@ def ui_analisis_predictivo_ingresos(db: Database):
             anio_b = col2.selectbox("Año B", anios_disponibles,
                                     index=len(anios_disponibles) - 1, key="pred_anio_b")
 
-            def resumen_anio(a):
-                d = df_f[df_f["anio"] == a].groupby("mes").agg(
-                    reservas=("numero", "count"),
-                    ingresos=("ingreso_total", "sum"),
-                    noches=("numeroNoches", "sum"),
-                ).reset_index()
-                d["mes_nombre"] = d["mes"].map(MESES_ES)
-                return d.set_index("mes")
+            # Agregar datos por año/mes
+            df_agr = (
+                df_f.groupby(["anio", "mes"])
+                .agg(reservas=("numero", "count"),
+                     ingresos=("ingreso_total", "sum"),
+                     noches=("numeroNoches", "sum"))
+                .reset_index()
+            )
 
-            da = resumen_anio(anio_a)
-            db_ = resumen_anio(anio_b)
-            todos_meses = sorted(set(da.index) | set(db_.index))
+            # Completar los 12 meses para cada año
+            da = _completar_12_meses(df_agr, "anio", "mes",
+                                      ["reservas", "ingresos", "noches"], anio_a)
+            db_ = _completar_12_meses(df_agr, "anio", "mes",
+                                       ["reservas", "ingresos", "noches"], anio_b)
 
-            comp = pd.DataFrame({"mes": todos_meses})
-            comp["mes_nombre"] = comp["mes"].map(MESES_ES)
-            comp[f"res_{anio_a}"] = comp["mes"].map(da["reservas"]).fillna(0).astype(int)
-            comp[f"res_{anio_b}"] = comp["mes"].map(db_["reservas"]).fillna(0).astype(int)
-            comp[f"ing_{anio_a}"] = comp["mes"].map(da["ingresos"]).fillna(0)
-            comp[f"ing_{anio_b}"] = comp["mes"].map(db_["ingresos"]).fillna(0)
-            comp[f"noc_{anio_a}"] = comp["mes"].map(da["noches"]).fillna(0).astype(int)
-            comp[f"noc_{anio_b}"] = comp["mes"].map(db_["noches"]).fillna(0).astype(int)
-            comp = comp.sort_values("mes")
-            orden_meses = comp["mes_nombre"].tolist()
-            comp = comp.set_index("mes_nombre")
-            comp.index = pd.CategoricalIndex(comp.index, categories=orden_meses, ordered=True)
+            meses_nombres = [MESES_ES[m] for m in TODOS_MESES]
+
+            comp = pd.DataFrame({"mes": TODOS_MESES, "mes_nombre": meses_nombres})
+            comp[f"res_{anio_a}"]  = da["reservas"].values
+            comp[f"res_{anio_b}"]  = db_["reservas"].values
+            comp[f"ing_{anio_a}"]  = da["ingresos"].values
+            comp[f"ing_{anio_b}"]  = db_["ingresos"].values
+            comp[f"noc_{anio_a}"]  = da["noches"].values
+            comp[f"noc_{anio_b}"]  = db_["noches"].values
 
             st.markdown("**Reservas por mes**")
-            st.bar_chart(comp[[f"res_{anio_a}", f"res_{anio_b}"]])
+            _pc(_bar2(meses_nombres,
+                      comp[f"res_{anio_a}"].values,
+                      comp[f"res_{anio_b}"].values,
+                      str(anio_a), str(anio_b)))
 
             st.markdown("**Ingresos por mes ($)**")
-            st.bar_chart(comp[[f"ing_{anio_a}", f"ing_{anio_b}"]])
+            _pc(_bar2(meses_nombres,
+                      comp[f"ing_{anio_a}"].values,
+                      comp[f"ing_{anio_b}"].values,
+                      str(anio_a), str(anio_b)))
 
             st.markdown("**Noches vendidas por mes**")
-            st.line_chart(comp[[f"noc_{anio_a}", f"noc_{anio_b}"]])
+            _pc(_line2(meses_nombres,
+                       comp[f"noc_{anio_a}"].values,
+                       comp[f"noc_{anio_b}"].values,
+                       str(anio_a), str(anio_b)))
 
             st.markdown("**Ingresos por mes — línea de tendencia ($)**")
-            st.line_chart(comp[[f"ing_{anio_a}", f"ing_{anio_b}"]])
+            _pc(_line2(meses_nombres,
+                       comp[f"ing_{anio_a}"].values,
+                       comp[f"ing_{anio_b}"].values,
+                       str(anio_a), str(anio_b)))
 
             # Variación %
             comp["var_reservas_%"] = np.where(
@@ -270,7 +415,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
             )
 
             with st.expander("Ver tabla con variación %"):
-                st.dataframe(comp.reset_index(), use_container_width=True, hide_index=True)
+                st.dataframe(comp.drop(columns=["mes"]), use_container_width=True, hide_index=True)
 
     # ══════════════════════════════════════════════════════════════════
     # TAB 4 — POR DEPARTAMENTO
@@ -289,20 +434,20 @@ def ui_analisis_predictivo_ingresos(db: Database):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Reservas por departamento**")
-            st.bar_chart(df_dep.set_index("departamento")["reservas"])
+            _pc(_bar(df_dep.set_index("departamento")["reservas"]))
         with c2:
             st.markdown("**Ingresos por departamento ($)**")
-            st.bar_chart(df_dep.set_index("departamento")["ingresos"])
+            _pc(_bar(df_dep.set_index("departamento")["ingresos"], color="#ff7f0e"))
 
         st.markdown("**Noches vendidas por departamento**")
-        st.bar_chart(df_dep.set_index("departamento")["noches"])
+        _pc(_bar(df_dep.set_index("departamento")["noches"], color="#2ca02c"))
 
         # Ocupación estimada (noches vendidas / días del período)
         dias_periodo = max((df["fechaFin"].max() - df["fechaInicio"].min()).days, 1)
         df_dep["ocupacion_%"] = (df_dep["noches"] / dias_periodo * 100).round(1).clip(upper=100)
 
         st.markdown("**Tasa de ocupación estimada (%)**")
-        st.bar_chart(df_dep.set_index("departamento")["ocupacion_%"])
+        _pc(_bar(df_dep.set_index("departamento")["ocupacion_%"], color="#9467bd"))
 
         with st.expander("Ver tabla completa"):
             df_dep2 = df_dep.copy()
@@ -331,7 +476,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
         # Distribución de estadías
         st.markdown("**Distribución de duración de estadía (noches)**")
         hist_data = df["numeroNoches"].value_counts().sort_index()
-        st.bar_chart(hist_data)
+        _pc(_bar(hist_data, color="#8c564b"))
 
         # Ciudades de origen
         if "ciudad" in df.columns or True:
@@ -345,7 +490,7 @@ def ui_analisis_predictivo_ingresos(db: Database):
             df_ciu = db.fetch_df(sql_ciu)
             if not df_ciu.empty:
                 st.markdown("**Top 15 ciudades de origen**")
-                st.bar_chart(df_ciu.set_index("ciudad")["reservas"])
+                _pc(_bar(df_ciu.set_index("ciudad")["reservas"], color="#e377c2"))
 
         # Día de la semana con más check-in
         df["dia_semana"] = df["fechaInicio"].dt.day_name()
@@ -355,17 +500,14 @@ def ui_analisis_predictivo_ingresos(db: Database):
         df_dias = df["dia_semana"].value_counts().reindex(dias_orden).fillna(0)
         df_dias.index = [dias_es[d] for d in df_dias.index]
         st.markdown("**Check-ins por día de la semana**")
-        st.bar_chart(df_dias)
+        _pc(_bar(df_dias, color="#7f7f7f"))
 
         # Mes más popular
         df_mes_pop = df.groupby("mes").agg(reservas=("numero","count")).reset_index()
         df_mes_pop["mes_nombre"] = df_mes_pop["mes"].map(MESES_ES)
         df_mes_pop = df_mes_pop.sort_values("mes")
-        orden_pop = df_mes_pop["mes_nombre"].tolist()
-        df_mes_pop = df_mes_pop.set_index("mes_nombre")
-        df_mes_pop.index = pd.CategoricalIndex(df_mes_pop.index, categories=orden_pop, ordered=True)
         st.markdown("**Reservas por mes (todos los años)**")
-        st.bar_chart(df_mes_pop["reservas"])
+        _pc(_bar(df_mes_pop.set_index("mes_nombre")["reservas"]))
 
     # ══════════════════════════════════════════════════════════════════
     # TAB 6 — PROYECCIÓN DE DEMANDA
@@ -417,13 +559,13 @@ def ui_analisis_predictivo_ingresos(db: Database):
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown("**Reservas proyectadas**")
-                st.bar_chart(_graf(df_proy, "reservas_proyectadas"))
+                _pc(_bar(df_proy.set_index("periodo")["reservas_proyectadas"], color="#17becf"))
             with c2:
                 st.markdown("**Ingresos proyectados ($)**")
-                st.bar_chart(_graf(df_proy, "ingresos_proyectados"))
+                _pc(_bar(df_proy.set_index("periodo")["ingresos_proyectados"], color="#bcbd22"))
 
             st.markdown("**Noches proyectadas**")
-            st.line_chart(_graf(df_proy, "noches_proyectadas"))
+            _pc(_line1(df_proy.set_index("periodo")["noches_proyectadas"], color="#d62728"))
 
             # Tabla
             df_proy2 = df_proy.copy()
@@ -600,6 +742,15 @@ def ui_analisis_predictivo_gastos(db):
             .agg(total=("valor", "sum"), cantidad=("numero", "count"))
             .reset_index()
         )
+        # Completar todos los meses de cada año presente
+        if not df_mes.empty:
+            anios_pres = sorted(df_mes["anio"].unique())
+            base_full = pd.DataFrame(
+                [(a, m) for a in anios_pres for m in TODOS_MESES],
+                columns=["anio", "mes"]
+            )
+            df_mes = base_full.merge(df_mes, on=["anio", "mes"], how="left").fillna(0)
+
         df_mes["periodo"] = df_mes.apply(
             lambda r: f"{MESES_ES[int(r['mes'])]}-{int(r['anio'])}", axis=1
         )
@@ -607,12 +758,12 @@ def ui_analisis_predictivo_gastos(db):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Gasto total por mes ($)**")
-            st.bar_chart(_graf(df_mes, "total"))
+            _pc(_bar(df_mes.set_index("periodo")["total"], color="#d62728"))
         with c2:
             st.markdown("**Cantidad de gastos por mes**")
-            st.bar_chart(_graf(df_mes, "cantidad"))
+            _pc(_bar(df_mes.set_index("periodo")["cantidad"], color="#9467bd"))
         st.markdown("**Evolución acumulada de gastos**")
-        st.area_chart(_graf(df_mes, "total"))
+        _pc(_area1(df_mes.set_index("periodo")["total"], color="#d62728"))
         with st.expander("Ver tabla detallada"):
             df_show = df_mes[["periodo", "total", "cantidad"]].copy()
             df_show["total"] = df_show["total"].map(moneda)
@@ -625,7 +776,7 @@ def ui_analisis_predictivo_gastos(db):
             format_func=lambda m: MESES_ES[m],
             index=pd.Timestamp.today().month - 1, key="gas_mes_comp"
         )
-        df_comp = df_f[df_f["mes"] == mes_sel].groupby("anio").agg(
+        df_comp = df[df["mes"] == mes_sel].groupby("anio").agg(
             total=("valor", "sum"), cantidad=("numero", "count"),
             promedio=("valor", "mean")).reset_index()
         if df_comp.empty:
@@ -634,10 +785,10 @@ def ui_analisis_predictivo_gastos(db):
             c1, c2 = st.columns(2)
             with c1:
                 st.markdown(f"**Gasto total en {MESES_ES[mes_sel]} por año ($)**")
-                st.bar_chart(df_comp.set_index("anio")["total"])
+                _pc(_bar(df_comp.set_index("anio")["total"], color="#d62728"))
             with c2:
                 st.markdown(f"**Cantidad de gastos en {MESES_ES[mes_sel]} por año**")
-                st.bar_chart(df_comp.set_index("anio")["cantidad"])
+                _pc(_bar(df_comp.set_index("anio")["cantidad"], color="#9467bd"))
             df_comp2 = df_comp.copy()
             df_comp2["total"] = df_comp2["total"].map(moneda)
             df_comp2["promedio"] = df_comp2["promedio"].map(moneda)
@@ -652,28 +803,33 @@ def ui_analisis_predictivo_gastos(db):
             col1, col2 = st.columns(2)
             anio_a = col1.selectbox("Año A", anios, index=len(anios)-2, key="gas_anio_a")
             anio_b = col2.selectbox("Año B", anios, index=len(anios)-1, key="gas_anio_b")
-            def res_gas(a):
-                d = df[df["anio"] == a].groupby("mes").agg(total=("valor", "sum")).reset_index()
-                return d.set_index("mes")
-            da, db_ = res_gas(anio_a), res_gas(anio_b)
-            todos = sorted(set(da.index) | set(db_.index))
-            comp = pd.DataFrame({"mes": todos})
-            comp["mes_nombre"] = comp["mes"].map(MESES_ES)
-            comp[f"gas_{anio_a}"] = comp["mes"].map(da["total"]).fillna(0)
-            comp[f"gas_{anio_b}"] = comp["mes"].map(db_["total"]).fillna(0)
-            comp = comp.sort_values("mes")
-            orden_meses = comp["mes_nombre"].tolist()
-            comp = comp.set_index("mes_nombre")
-            comp.index = pd.CategoricalIndex(comp.index, categories=orden_meses, ordered=True)
+
+            df_agr_g = (
+                df.groupby(["anio", "mes"])
+                .agg(total=("valor", "sum"))
+                .reset_index()
+            )
+            da  = _completar_12_meses(df_agr_g, "anio", "mes", ["total"], anio_a)
+            db_ = _completar_12_meses(df_agr_g, "anio", "mes", ["total"], anio_b)
+            meses_nombres = [MESES_ES[m] for m in TODOS_MESES]
+
+            comp = pd.DataFrame({"mes": TODOS_MESES, "mes_nombre": meses_nombres})
+            comp[f"gas_{anio_a}"] = da["total"].values
+            comp[f"gas_{anio_b}"] = db_["total"].values
+
             st.markdown("**Gastos por mes ($)**")
-            st.bar_chart(comp[[f"gas_{anio_a}", f"gas_{anio_b}"]])
+            _pc(_bar2(meses_nombres,
+                      comp[f"gas_{anio_a}"].values,
+                      comp[f"gas_{anio_b}"].values,
+                      str(anio_a), str(anio_b),
+                      color1="#d62728", color2="#ff7f0e"))
             comp["var_%"] = np.where(
                 comp[f"gas_{anio_a}"] > 0,
                 ((comp[f"gas_{anio_b}"] - comp[f"gas_{anio_a}"]) / comp[f"gas_{anio_a}"] * 100).round(1),
                 np.nan
             )
             with st.expander("Ver tabla con variación %"):
-                st.dataframe(comp.reset_index(), use_container_width=True, hide_index=True)
+                st.dataframe(comp.drop(columns=["mes"]), use_container_width=True, hide_index=True)
 
     with tabs[3]:
         st.subheader("Gastos por concepto")
@@ -683,10 +839,10 @@ def ui_analisis_predictivo_gastos(db):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Total por concepto ($)**")
-            st.bar_chart(df_conc.set_index("concepto")["total"])
+            _pc(_bar(df_conc.set_index("concepto")["total"], color="#d62728"))
         with c2:
             st.markdown("**Frecuencia por concepto**")
-            st.bar_chart(df_conc.set_index("concepto")["cantidad"])
+            _pc(_bar(df_conc.set_index("concepto")["cantidad"], color="#9467bd"))
         with st.expander("Ver tabla completa"):
             df_conc2 = df_conc.copy()
             df_conc2["total"] = df_conc2["total"].map(moneda)
@@ -718,7 +874,7 @@ def ui_analisis_predictivo_gastos(db):
                     "gastos_proyectados": max(m_g * t_fut + b_g, 0)
                 })
             df_proy = pd.DataFrame(proy)
-            st.bar_chart(_graf(df_proy, "gastos_proyectados"))
+            _pc(_bar(df_proy.set_index("periodo")["gastos_proyectados"], color="#d62728"))
             df_proy2 = df_proy.copy()
             df_proy2["gastos_proyectados"] = df_proy2["gastos_proyectados"].map(moneda)
             df_proy2.columns = ["Período", "Gastos proyectados"]
@@ -795,6 +951,16 @@ def ui_analisis_predictivo_combinado(db):
         return df.groupby(["anio", "mes"]).agg(gastos=("valor", "sum")).reset_index()
 
     df_comb = pd.merge(_agg_ing(df_res), _agg_gas(df_gas), on=["anio", "mes"], how="outer").fillna(0)
+
+    # Completar los 12 meses de cada año presente en el combinado
+    if not df_comb.empty:
+        anios_pres = sorted(df_comb["anio"].unique().astype(int))
+        base_full = pd.DataFrame(
+            [(a, m) for a in anios_pres for m in TODOS_MESES],
+            columns=["anio", "mes"]
+        )
+        df_comb = base_full.merge(df_comb, on=["anio", "mes"], how="left").fillna(0)
+
     df_comb["periodo"] = df_comb.apply(
         lambda r: f"{MESES_ES[int(r['mes'])]}-{int(r['anio'])}", axis=1
     )
@@ -818,12 +984,17 @@ def ui_analisis_predictivo_combinado(db):
         c1, c2 = st.columns(2)
         with c1:
             st.markdown("**Ingresos ($)**")
-            st.bar_chart(_graf(df_comb, "ingresos"))
+            _pc(_bar(df_comb.set_index("periodo")["ingresos"], color="#ff7f0e"))
         with c2:
             st.markdown("**Gastos ($)**")
-            st.bar_chart(_graf(df_comb, "gastos"))
+            _pc(_bar(df_comb.set_index("periodo")["gastos"], color="#d62728"))
         st.markdown("**Comparación directa Ingresos vs Gastos**")
-        st.line_chart(df_comb.set_index(pd.CategoricalIndex(df_comb["periodo"], categories=df_comb["periodo"].tolist(), ordered=True))[["ingresos", "gastos"]])
+        _pc(_line2(
+            df_comb["periodo"].tolist(),
+            df_comb["ingresos"].values,
+            df_comb["gastos"].values,
+            "Ingresos", "Gastos",
+        ))
         with st.expander("Ver tabla"):
             df_show = df_comb[["periodo", "ingresos", "gastos", "margen", "margen_%"]].copy()
             for col in ["ingresos", "gastos", "margen"]:
@@ -833,10 +1004,10 @@ def ui_analisis_predictivo_combinado(db):
 
     with tabs[1]:
         st.subheader("Rentabilidad mensual (margen neto)")
-        st.markdown("**Margen neto por mes (Ingresos \u2212 Gastos)**")
-        st.bar_chart(_graf(df_comb, "margen"))
+        st.markdown("**Margen neto por mes (Ingresos − Gastos)**")
+        _pc(_bar(df_comb.set_index("periodo")["margen"], color="#2ca02c"))
         st.markdown("**Margen % sobre ingresos**")
-        st.line_chart(_graf(df_comb, "margen_%"))
+        _pc(_line1(df_comb.set_index("periodo")["margen_%"], color="#17becf"))
         mejor_mes = df_comb.loc[df_comb["margen"].idxmax(), "periodo"] if not df_comb.empty else "N/A"
         peor_mes  = df_comb.loc[df_comb["margen"].idxmin(), "periodo"] if not df_comb.empty else "N/A"
         c1, c2, c3, c4 = st.columns(4)
@@ -846,33 +1017,44 @@ def ui_analisis_predictivo_combinado(db):
         c4.metric("Peor mes", peor_mes)
 
     with tabs[2]:
-        st.subheader("Comparación año vs año \u2014 Ingresos, Gastos y Margen")
-        anios_comb = sorted(df_comb["anio"].unique().tolist())
+        st.subheader("Comparación año vs año — Ingresos, Gastos y Margen")
+        anios_comb = sorted(df_comb["anio"].unique().astype(int).tolist())
         if len(anios_comb) < 2:
             st.info("Necesitás datos de al menos 2 años.")
         else:
             col1, col2 = st.columns(2)
             anio_a = col1.selectbox("Año A", anios_comb, index=len(anios_comb)-2, key="comb_anio_a")
             anio_b = col2.selectbox("Año B", anios_comb, index=len(anios_comb)-1, key="comb_anio_b")
-            def res_comb(a):
-                return df_comb[df_comb["anio"] == a].set_index("mes")[["ingresos", "gastos", "margen"]]
-            da, db_ = res_comb(anio_a), res_comb(anio_b)
-            todos = sorted(set(da.index) | set(db_.index))
-            comp = pd.DataFrame({"mes": todos})
-            comp["mes_nombre"] = comp["mes"].map(MESES_ES)
+
+            # Completar 12 meses para cada año
+            da  = _completar_12_meses(df_comb, "anio", "mes",
+                                       ["ingresos", "gastos", "margen"], anio_a)
+            db_ = _completar_12_meses(df_comb, "anio", "mes",
+                                       ["ingresos", "gastos", "margen"], anio_b)
+            meses_nombres = [MESES_ES[m] for m in TODOS_MESES]
+
+            comp = pd.DataFrame({"mes": TODOS_MESES, "mes_nombre": meses_nombres})
             for col in ["ingresos", "gastos", "margen"]:
-                comp[f"{col}_{anio_a}"] = comp["mes"].map(da[col] if col in da.columns else pd.Series(dtype=float)).fillna(0)
-                comp[f"{col}_{anio_b}"] = comp["mes"].map(db_[col] if col in db_.columns else pd.Series(dtype=float)).fillna(0)
-            comp = comp.sort_values("mes")
-            orden_meses = comp["mes_nombre"].tolist()
-            comp = comp.set_index("mes_nombre")
-            comp.index = pd.CategoricalIndex(comp.index, categories=orden_meses, ordered=True)
+                comp[f"{col}_{anio_a}"] = da[col].values
+                comp[f"{col}_{anio_b}"] = db_[col].values
+
             st.markdown("**Ingresos**")
-            st.bar_chart(comp[[f"ingresos_{anio_a}", f"ingresos_{anio_b}"]])
+            _pc(_bar2(meses_nombres,
+                      comp[f"ingresos_{anio_a}"].values,
+                      comp[f"ingresos_{anio_b}"].values,
+                      str(anio_a), str(anio_b),
+                      color1="#ff7f0e", color2="#1f77b4"))
             st.markdown("**Gastos**")
-            st.bar_chart(comp[[f"gastos_{anio_a}", f"gastos_{anio_b}"]])
+            _pc(_bar2(meses_nombres,
+                      comp[f"gastos_{anio_a}"].values,
+                      comp[f"gastos_{anio_b}"].values,
+                      str(anio_a), str(anio_b),
+                      color1="#d62728", color2="#e377c2"))
             st.markdown("**Margen neto**")
-            st.line_chart(comp[[f"margen_{anio_a}", f"margen_{anio_b}"]])
+            _pc(_line2(meses_nombres,
+                       comp[f"margen_{anio_a}"].values,
+                       comp[f"margen_{anio_b}"].values,
+                       str(anio_a), str(anio_b)))
 
     with tabs[3]:
         st.subheader("\U0001f52e Proyección financiera \u2014 próximos 6 meses")
@@ -898,9 +1080,14 @@ def ui_analisis_predictivo_combinado(db):
                               "margen_proy": ing_p - gas_p})
             df_proy = pd.DataFrame(proy)
             st.markdown("**Ingresos vs Gastos proyectados**")
-            st.line_chart(df_proy.set_index(pd.CategoricalIndex(df_proy["periodo"], categories=df_proy["periodo"].tolist(), ordered=True))[["ingresos_proy", "gastos_proy"]])
+            _pc(_line2(
+                df_proy["periodo"].tolist(),
+                df_proy["ingresos_proy"].values,
+                df_proy["gastos_proy"].values,
+                "Ingresos proy.", "Gastos proy.",
+            ))
             st.markdown("**Margen neto proyectado**")
-            st.bar_chart(_graf(df_proy, "margen_proy"))
+            _pc(_bar(df_proy.set_index("periodo")["margen_proy"], color="#2ca02c"))
             df_proy2 = df_proy.copy()
             for col in ["ingresos_proy", "gastos_proy", "margen_proy"]:
                 df_proy2[col] = df_proy2[col].map(moneda)

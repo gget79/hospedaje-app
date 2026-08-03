@@ -7,3 +7,4 @@ numpy
 reportlab
 PyPDF2
 pillow
+plotly>=5.0
