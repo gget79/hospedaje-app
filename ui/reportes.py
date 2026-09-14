@@ -710,12 +710,190 @@ def ui_rep_rentabilidad_neta(db: Database):
         f"**{moneda(gran_total)}** ingreso neto total"
     )
 
-    # Exportar
-    buf = BytesIO()
-    df_limp_show.to_excel(buf, index=False, engine="openpyxl")
+    # ══════════════════════════════════════════════════════
+    # EXPORTAR EXCEL COMPLETO — todas las secciones
+    # ══════════════════════════════════════════════════════
+    st.markdown("---")
+
+    def _build_excel_completo():
+        """Genera un Excel con todas las secciones en orden, con cabeceras y totales."""
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from openpyxl.utils import get_column_letter
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Rentabilidad Neta"
+
+        # ── Estilos ──
+        TITULO    = Font(bold=True, size=13, color="FFFFFF")
+        SECCION   = Font(bold=True, size=11, color="FFFFFF")
+        HEADER    = Font(bold=True, size=10)
+        TOTAL_F   = Font(bold=True, size=10, color="1F4E79")
+        BG_TITULO = PatternFill("solid", fgColor="1F4E79")
+        BG_SEC1   = PatternFill("solid", fgColor="2E75B6")
+        BG_SEC2   = PatternFill("solid", fgColor="2E75B6")
+        BG_SEC3   = PatternFill("solid", fgColor="2E75B6")
+        BG_HEAD   = PatternFill("solid", fgColor="D6E4F0")
+        BG_TOTAL  = PatternFill("solid", fgColor="EBF3FB")
+        BG_GRAN   = PatternFill("solid", fgColor="BDD7EE")
+        thin      = Side(style="thin", color="AAAAAA")
+        border    = Border(left=thin, right=thin, top=thin, bottom=thin)
+        center    = Alignment(horizontal="center", vertical="center")
+
+        def _write_row(ws, row_idx, values, font=None, fill=None, align=None):
+            for col, val in enumerate(values, 1):
+                cell = ws.cell(row=row_idx, column=col, value=val)
+                cell.border = border
+                if font:  cell.font  = font
+                if fill:  cell.fill  = fill
+                if align: cell.alignment = align
+
+        def _autowidth(ws):
+            for col in ws.columns:
+                max_len = max((len(str(c.value)) if c.value else 0) for c in col)
+                ws.column_dimensions[get_column_letter(col[0].column)].width = min(max_len + 4, 40)
+
+        row = 1
+
+        # ── Título principal ──
+        ws.merge_cells(f"A{row}:I{row}")
+        cell = ws.cell(row=row, column=1,
+                       value=f"RENTABILIDAD NETA  |  Período: {f_ini} al {f_fin}  |  Deptos: {', '.join(dep_sel) if dep_sel else 'Todos'}")
+        cell.font = TITULO
+        cell.fill = BG_TITULO
+        cell.alignment = center
+        row += 1
+        ws.append([])
+        row += 1
+
+        # ══════════════════════════════════
+        # SECCIÓN 1 — Deptos ajenos
+        # ══════════════════════════════════
+        ws.merge_cells(f"A{row}:I{row}")
+        cell = ws.cell(row=row, column=1,
+                       value=f"SECCIÓN 1: Pago al dueño — Departamentos ajenos  (pago estándar: ${pago_std:.2f}/noche)")
+        cell.font = SECCION
+        cell.fill = BG_SEC1
+        cell.alignment = center
+        row += 1
+
+        if not df_ajenos.empty:
+            heads1 = ["N°", "Depto", "Fecha", "Huésped", "Noches",
+                      "Estadía cobrada", "Pago/noche ($)", "Total pago dueño", "Neto ajeno"]
+            _write_row(ws, row, heads1, font=HEADER, fill=BG_HEAD)
+            row += 1
+
+            for _, r in df_aj_ed.iterrows():
+                pago_n = float(df_editado.loc[df_editado["N°"] == r["N°"], "Pago/noche ($)"].values[0]) \
+                         if not df_editado.empty else float(r["Pago/noche ($)"])
+                pt = round(float(r["Noches"]) * pago_n, 2)
+                nt = round(float(r["Estadía cobrada"]) - pt, 2)
+                _write_row(ws, row, [
+                    r["N°"], r["Depto"], r["Fecha"], r["Huésped"], r["Noches"],
+                    float(r["Estadía cobrada"]), pago_n, pt, nt
+                ])
+                row += 1
+
+            # Subtotales sección 1
+            _write_row(ws, row,
+                       ["", "", "", "SUBTOTALES", "", total_estadias_ajenas,
+                        "", total_pagos_duenos, total_neto_ajenos],
+                       font=TOTAL_F, fill=BG_TOTAL)
+            row += 2
+        else:
+            ws.cell(row=row, column=1, value="Sin reservas de deptos ajenos en el período.")
+            row += 2
+
+        # ══════════════════════════════════
+        # SECCIÓN 2 — Excedente limpieza
+        # ══════════════════════════════════
+        ws.merge_cells(f"A{row}:G{row}")
+        cell = ws.cell(row=row, column=1,
+                       value=f"SECCIÓN 2: Excedente de limpieza — Todos los departamentos  (costo fijo: ${costo_limp:.2f})")
+        cell.font = SECCION
+        cell.fill = BG_SEC2
+        cell.alignment = center
+        row += 1
+
+        heads2 = ["N°", "Depto", "Tipo", "Fecha", "Huésped", "Limp. cobrada", "Excedente ($)"]
+        _write_row(ws, row, heads2, font=HEADER, fill=BG_HEAD)
+        row += 1
+
+        df_limp_all = df.copy()
+        df_limp_all["exc"] = df_limp_all["valorLimpieza"].apply(lambda v: max(float(v) - costo_limp, 0.0))
+        for _, r in df_limp_all.iterrows():
+            _write_row(ws, row, [
+                int(r["numero"]), r["departamento"], r["tipo"], r["fecha_str"],
+                r["nombreCliente"], float(r["valorLimpieza"]), float(r["exc"])
+            ])
+            row += 1
+
+        _write_row(ws, row,
+                   ["", "", "", "", "SUBTOTAL", "", total_excedente],
+                   font=TOTAL_F, fill=BG_TOTAL)
+        row += 2
+
+        # ══════════════════════════════════
+        # SECCIÓN 3 — Comisión propios
+        # ══════════════════════════════════
+        pct = pct_comision if not df_propios.empty else 10.0
+        ws.merge_cells(f"A{row}:G{row}")
+        cell = ws.cell(row=row, column=1,
+                       value=f"SECCIÓN 3: Comisión deptos propios — {pct:.0f}% del total estadía")
+        cell.font = SECCION
+        cell.fill = BG_SEC3
+        cell.alignment = center
+        row += 1
+
+        if not df_propios.empty:
+            heads3 = ["N°", "Depto", "Fecha", "Huésped", "Noches",
+                      "Estadía cobrada", f"Comisión {pct:.0f}% ($)"]
+            _write_row(ws, row, heads3, font=HEADER, fill=BG_HEAD)
+            row += 1
+            for _, r in df_prop_show.iterrows():
+                com_col = f"Comisión {pct:.0f}% ($)"
+                _write_row(ws, row, [
+                    r["N°"], r["Depto"], r["Fecha"], r["Huésped"],
+                    r["Noches"], float(r["Estadía cobrada"]), float(r[com_col])
+                ])
+                row += 1
+            _write_row(ws, row,
+                       ["", "", "", "", "SUBTOTAL",
+                        float(df_propios["totalEstadia"].sum()), total_comision_propios],
+                       font=TOTAL_F, fill=BG_TOTAL)
+            row += 2
+        else:
+            ws.cell(row=row, column=1, value="Sin reservas de deptos propios en el período.")
+            row += 2
+
+        # ══════════════════════════════════
+        # GRAN TOTAL
+        # ══════════════════════════════════
+        ws.merge_cells(f"A{row}:I{row}")
+        gran = total_neto_ajenos + total_excedente + total_comision_propios
+        cell = ws.cell(row=row, column=1,
+                       value=f"TOTAL INGRESO NETO:   "
+                             f"Neto ajenos ${total_neto_ajenos:.2f}  +  "
+                             f"Exc. limpieza ${total_excedente:.2f}  +  "
+                             f"Comisión propios ${total_comision_propios:.2f}  =  "
+                             f"TOTAL ${gran:.2f}")
+        cell.font = Font(bold=True, size=12, color="1F4E79")
+        cell.fill = BG_GRAN
+        cell.alignment = center
+        cell.border = border
+
+        _autowidth(ws)
+
+        buf = BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
     st.download_button(
-        "⬇️ Exportar Excel",
-        data=buf.getvalue(),
-        file_name=f"rentabilidad_neta_{f_ini}_{f_fin}.xlsx",
+        "📥 Exportar a Excel todo",
+        data=_build_excel_completo(),
+        file_name=f"rentabilidad_neta_completo_{f_ini}_{f_fin}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        type="primary",
     )
